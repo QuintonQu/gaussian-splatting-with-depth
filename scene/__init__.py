@@ -45,6 +45,12 @@ class Scene:
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
+        elif os.path.exists(os.path.join(args.source_path, "cams/extrinsics.npy")):
+            print("Found cams/extrinsics.npy, assuming ToRF dataset!")
+            scene_info = sceneLoadTypeCallbacks["ToRF"](args.source_path, args.white_background, args.eval)
+        elif os.path.exists(os.path.join(args.source_path, "camera/to_worlds.npy")):
+            print("Found camera/to_worlds.npy, assuming Mitsuba dataset!")
+            scene_info = sceneLoadTypeCallbacks["Mitsuba"](args.source_path, args.white_background, args.eval)
         else:
             assert False, "Could not recognize scene type!"
 

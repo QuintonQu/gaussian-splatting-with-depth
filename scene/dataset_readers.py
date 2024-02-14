@@ -22,6 +22,9 @@ from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
+import math
+import re
+import cv2
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -34,6 +37,7 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
+    depth: np.array = None
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -213,19 +217,37 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             FovY = fovy 
             FovX = fovx
 
+            depth_im = cv2.imread(os.path.join(path, frame["file_path"] + "_depth_0001.png")).astype(float)[:,:,0]
+            transformed = 8*(255-depth_im)/255
+             # np.save(os.path.join(path, frame["file_path"] + "_depth.npy"), transformed)
+            depth = transformed.flatten()
+            # print(f"Depth min: {np.min(depth)}, max: {np.max(depth)}")
+            bin_edges = np.linspace(3, 8, num=201)
+            hist, _ = np.histogram(depth, bins=bin_edges)
+           
+            depth = hist / np.max(hist)
+
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
+                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], depth=depth))
             
     return cam_infos
 
 def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
-    print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
-    print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
+    # print("Reading Training Transforms")
+    # train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
+    # print("Reading Test Transforms")
+    # test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
     
-    if not eval:
-        train_cam_infos.extend(test_cam_infos)
+    # if not eval:
+    #     train_cam_infos.extend(test_cam_infos)
+    #     test_cam_infos = []
+    print("Reading Transforms")
+    cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
+    if eval:
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % 4 == 0]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % 2 != 0]
+    else:
+        train_cam_infos = cam_infos
         test_cam_infos = []
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
@@ -254,7 +276,221 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
                            ply_path=ply_path)
     return scene_info
 
+# BLOCK: Read ToRF Scene
+def _getToRFColorFilename(path, idx):
+    return os.path.join(path, "color/{:04d}.npy".format(idx))
+
+def _transform_vectors_np(vectors, M):
+    vectors = np.reshape(vectors, (-1, 3))
+    return np.transpose(M[..., :3, :3] @ np.transpose(vectors, [1, 0]), [1, 0])
+
+def _calculateFovFromTwoVector(vector1, vector2):
+    dot = np.dot(vector1, vector2)
+    norm_vector1 = np.linalg.norm(vector1)
+    norm_vector2 = np.linalg.norm(vector2)
+    angle_rad = np.arccos(dot / (norm_vector1 * norm_vector2))
+    return angle_rad
+
+def _calculateFovs(height, width, P_inv):
+    x, y = np.meshgrid(np.arange(width), np.arange(height))
+    z = np.ones_like(x)
+    points = np.stack([x, y, z], axis=-1)
+    rays_d = _transform_vectors_np(points, P_inv)
+    rays_d = np.reshape(rays_d, [height, width, 3])
+    # Get the middle line to calculate the fov
+    rays_d_x = rays_d[height//2]
+    rays_d_y = rays_d[:, width//2]
+    # Calculate the fov
+    fov_x = _calculateFovFromTwoVector(rays_d_x[0], rays_d_x[-1])
+    fov_y = _calculateFovFromTwoVector(rays_d_y[0], rays_d_y[-1])
+    return fov_x, fov_y
+
+def readToRFCameras(path):
+    cam_list = []
+    # Color paths
+    color_extrinsics_path = os.path.join(path, "cams/color_extrinsics.npy")
+    color_intrinsics_path = os.path.join(path, "cams/color_intrinsics.npy")
+    color_folder_path = os.path.join(path, "color")
+    # Depth paths
+    depth_folder_path = os.path.join(path, "depth")
+    
+    # Read the extrinsics and intrinsics
+    extrinsics = np.load(color_extrinsics_path)
+    intrinsics = np.load(color_intrinsics_path)
+    intrinsics_inv = np.linalg.inv(intrinsics)
+    
+    # Find how many color .npy file in the color folder
+    color_file_paths = [f for f in os.listdir(color_folder_path) if os.path.isfile(os.path.join(color_folder_path, f))]
+    color_file_paths.sort()
+    num_color_files = len(color_file_paths)
+    
+    # For each color file, we create a camera
+    for idx in range(num_color_files):
+        # Read the color file
+        color_file = np.load(os.path.join(color_folder_path, color_file_paths[idx]))
+        image = Image.fromarray((color_file * 255.0).astype(np.byte), "RGB")
+        height = color_file.shape[0]
+        width = color_file.shape[1]
+        # Read the extrinsics and intrinsics
+        extrinsic = extrinsics[idx]
+        fov_x, fov_y = _calculateFovs(height, width, intrinsics_inv)
+        # Read the depth
+        depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx])).flatten()
+        bin_edges = np.linspace(0, 8, num=201)
+        hist, _ = np.histogram(depth, bins=bin_edges)
+        # Min-max hist to 0-1
+        depth = hist / np.max(hist)
+        # Create the camera
+        cam_info = CameraInfo(uid=idx, R=extrinsic[:3, :3], T=extrinsic[:3, 3], FovY=fov_y, FovX=fov_x, image=image,
+                              image_path=os.path.join(color_folder_path, color_file_paths[idx]), image_name=str(color_file_paths[idx]), width=width, height=height, depth=depth)
+        cam_list.append(cam_info)
+
+    return cam_list
+
+def readToRFInfo(path, white_background, eval, extension=".npy", llffhold=8):
+    cam_infos = readToRFCameras(path)
+    nerf_normalization = getNerfppNorm(cam_infos)
+
+    # We do not have a test set for ToRF
+    if eval:
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+        # Throw out a warning
+        print("Warning: ToRF does not have a test set, spliting the train set for train and test.")
+    else:
+        train_cam_infos = cam_infos
+        test_cam_infos = []
+
+    # Of course we do not have point cloud for point3d
+    ply_path = os.path.join(path, "points3d.ply")
+    if not os.path.exists(ply_path):
+        # Since this data set has no colmap data, we start with random points
+        num_pts = 100_000
+        print(f"Generating random point cloud ({num_pts})...")
+        
+        # We create random points inside the bounds of the scenes
+        xyz = np.random.random((num_pts, 3)) * 8.0 - 4.0
+        shs = np.random.random((num_pts, 3)) / 255.0
+        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
+
+        storePly(ply_path, xyz, SH2RGB(shs) * 255)
+    try:
+        pcd = fetchPly(ply_path)
+    except:
+        pcd = None
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path)
+    return scene_info
+
+
+# BLOCK: Read Mitsuba Scene
+def readMistubaCameras(path, white_background):
+    cam_list = []
+    # Color paths
+    fovx_path = os.path.join(path, "camera/fov.npy")
+    to_worlds_path = os.path.join(path, "camera/to_worlds.npy")
+    color_folder_path = os.path.join(path, "color")
+    # Depth paths
+    depth_folder_path = os.path.join(path, "depth")
+    
+    # Read the fov and to_worlds
+    fovx = np.load(fovx_path)
+    fovx = np.deg2rad(fovx).item()
+    to_worlds = np.load(to_worlds_path)
+    
+    # Find how many color .npy file in the color folder and should only be "(number).npy" file
+    pattern = re.compile(r'^\d{4}\.npy$')
+    color_file_paths = [f for f in os.listdir(color_folder_path) if os.path.isfile(os.path.join(color_folder_path, f)) and pattern.match(f)]
+    color_file_paths.sort()
+    
+    # # WARNING:  WARNING:  WARNING:  WARNING: Temperary fix for the Mitsuba scene
+    # color_file_paths = color_file_paths[:16]
+    # # WARNING:  WARNING:  WARNING:  WARNING:
+
+    num_color_files = len(color_file_paths)
+    
+    # For each color file, we create a camera
+    for idx in range(num_color_files):
+        # Read the color file
+        color_file = np.load(os.path.join(color_folder_path, color_file_paths[idx]))
+        # Camera to world
+        C2W = to_worlds[idx]
+        # Mitsuba (x->left, y->up, z->forward), Colmap (x->right, y->down, z->forward)
+        C2W[:3, 0:2] *= -1
+        W2C = np.linalg.inv(C2W)
+        R = np.transpose(W2C[:3, :3])
+        T = W2C[:3, 3]
+
+
+        # Read the depth
+        depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
+        # Depth = 0.0 is the background
+        if white_background:
+            color_file[depth < 0.0] = 0
+        image = Image.fromarray((color_file).astype(np.byte), "RGB")
+        depth[depth < 0.0] = -1.0
+        # print(f"Depth min: {np.min(depth[depth>0.0])}, max: {np.max(depth)}")
+        bin_edges = np.linspace(0, 8, num=201)
+        hist, _ = np.histogram(depth.flatten(), bins=bin_edges)
+        depth = hist / np.max(hist)
+
+        fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
+        FovY = fovy 
+        FovX = fovx
+
+        # Create the camera
+        cam_info = CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+                              image_path=os.path.join(color_folder_path, color_file_paths[idx]), image_name=str(color_file_paths[idx]), width=image.size[0], height=image.size[1], depth=depth)
+        cam_list.append(cam_info)
+
+    return cam_list
+
+def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhold=8):
+    cam_infos = readMistubaCameras(path, white_background)
+    nerf_normalization = getNerfppNorm(cam_infos)
+
+    if eval:
+        train_cam_infos = cam_infos[:llffhold**2]
+        test_cam_infos = cam_infos[llffhold**2:]
+    else:
+        train_cam_infos = cam_infos
+        test_cam_infos = []
+    
+    print("Train set size: ", len(train_cam_infos))
+    print("Test set size: ", len(test_cam_infos))
+
+    # Of course we do not have point cloud for point3d
+    ply_path = os.path.join(path, "points3d.ply")
+    if not os.path.exists(ply_path):
+        # Since this data set has no colmap data, we start with random points
+        num_pts = 100_000
+        print(f"Generating random point cloud ({num_pts})...")
+        
+        # We create random points inside the bounds of the scenes
+        xyz = np.random.random((num_pts, 3)) * 8.0 - 4.0
+        shs = np.random.random((num_pts, 3)) / 255.0
+        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
+
+        storePly(ply_path, xyz, SH2RGB(shs) * 255)
+    try:
+        pcd = fetchPly(ply_path)
+    except:
+        pcd = None
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path)
+    return scene_info
+
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
-    "Blender" : readNerfSyntheticInfo
+    "Blender" : readNerfSyntheticInfo,
+    "ToRF" : readToRFInfo,
+    "Mitsuba" : readMitsubaSceneInfo
 }
