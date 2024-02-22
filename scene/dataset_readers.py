@@ -25,6 +25,7 @@ from scene.gaussian_model import BasicPointCloud
 import math
 import re
 import cv2
+from tqdm import tqdm
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -348,6 +349,8 @@ def readToRFCameras(path):
     return cam_list
 
 def readToRFInfo(path, white_background, eval, extension=".npy", llffhold=8):
+    assert False, "ToRF scene reader could be something wrong with camera axis. Refusal to process at this time!"
+
     cam_infos = readToRFCameras(path)
     nerf_normalization = getNerfppNorm(cam_infos)
 
@@ -406,17 +409,14 @@ def readMistubaCameras(path, white_background):
     pattern = re.compile(r'^\d{4}\.npy$')
     color_file_paths = [f for f in os.listdir(color_folder_path) if os.path.isfile(os.path.join(color_folder_path, f)) and pattern.match(f)]
     color_file_paths.sort()
-    
-    # # WARNING:  WARNING:  WARNING:  WARNING: Temperary fix for the Mitsuba scene
-    # color_file_paths = color_file_paths[:16]
-    # # WARNING:  WARNING:  WARNING:  WARNING:
 
     num_color_files = len(color_file_paths)
     
     # For each color file, we create a camera
-    for idx in range(num_color_files):
+    for idx in tqdm(range(num_color_files), desc="Reading Mitsuba Files"):
         # Read the color file
         color_file = np.load(os.path.join(color_folder_path, color_file_paths[idx]))
+        color_file = color_file[:, :, :3] # For not alpha channel
         # Camera to world
         C2W = to_worlds[idx]
         # Mitsuba (x->left, y->up, z->forward), Colmap (x->right, y->down, z->forward)
@@ -428,15 +428,12 @@ def readMistubaCameras(path, white_background):
 
         # Read the depth
         depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
-        # Depth = 0.0 is the background
-        if white_background:
-            color_file[depth < 0.0] = 0
         image = Image.fromarray((color_file).astype(np.byte), "RGB")
-        depth[depth < 0.0] = -1.0
+
         # print(f"Depth min: {np.min(depth[depth>0.0])}, max: {np.max(depth)}")
-        bin_edges = np.linspace(0, 8, num=201)
-        hist, _ = np.histogram(depth.flatten(), bins=bin_edges)
-        depth = hist / np.max(hist)
+        # bin_edges = np.linspace(0, 8, num=201)
+        # hist, _ = np.histogram(depth.flatten(), bins=bin_edges)
+        # depth = hist / np.max(hist)
 
         fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
         FovY = fovy 
@@ -449,16 +446,33 @@ def readMistubaCameras(path, white_background):
 
     return cam_list
 
-def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhold=8):
+def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhold=4):
     cam_infos = readMistubaCameras(path, white_background)
     nerf_normalization = getNerfppNorm(cam_infos)
+    # Reshape the cam_infos in to a 2D list (sqrt(len))^2
+    if math.sqrt(len(cam_infos)) % 1 != 0:
+        raise ValueError("The length of cam_infos must be a perfect square.")
+    size = int(math.sqrt(len(cam_infos)))
+    cam_infos_2d = [cam_infos[i*size : (i+1)*size] for i in range(size)]
 
     if eval:
-        train_cam_infos = cam_infos[:llffhold**2]
-        test_cam_infos = cam_infos[llffhold**2:]
+        # DEBUG: How to split the train and test set
+        # train_cam_infos = cam_infos[:llffhold**2]
+        # test_cam_infos = cam_infos[llffhold**2:]
+        train_cam_infos = []
+        test_cam_infos = []
+        for i in range(size):
+            for j in range(size):
+                if (i % llffhold == 0 or i==size-1) and (j % llffhold == 0 or j==size-1):
+                    train_cam_infos.append(cam_infos_2d[i][j])
+                else:
+                    test_cam_infos.append(cam_infos_2d[i][j])
+        test_cam_infos = []
+
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
+        # assert False, "Do you reallt want to use the whole Mitsuba scene as train set?"
     
     print("Train set size: ", len(train_cam_infos))
     print("Test set size: ", len(test_cam_infos))
@@ -472,6 +486,7 @@ def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhol
         
         # We create random points inside the bounds of the scenes
         xyz = np.random.random((num_pts, 3)) * 8.0 - 4.0
+        # xyz = np.zeros((num_pts, 3))
         shs = np.random.random((num_pts, 3)) / 255.0
         pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
 
