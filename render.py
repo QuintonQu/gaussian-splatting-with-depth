@@ -26,10 +26,12 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
     z_density_path = os.path.join(model_path, name, "ours_{}".format(iteration), "z_density")
+    color_npy_path = os.path.join(model_path, name, "ours_{}".format(iteration), "color_npy")
 
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
     makedirs(z_density_path, exist_ok=True)
+    makedirs(color_npy_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         render_info = render(view, gaussians, pipeline, background)
@@ -37,10 +39,14 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         z_density = render_info["z_density"]
         # print("Z density: {}".format(z_density))
         gt = view.original_image[0:3, :, :]
-        torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
-        torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:04d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:04d}'.format(idx) + ".png"))
         # Save Density to NPY file
-        np.save(os.path.join(z_density_path, '{0:05d}'.format(idx) + ".npy"), z_density.cpu().numpy())
+        np.save(os.path.join(z_density_path, '{0:04d}'.format(idx) + ".npy"), z_density.cpu().numpy())
+        render_numpy = rendering.cpu().numpy()
+        render_numpy = np.clip(np.round(render_numpy * 255), 0, 255).astype(np.uint8) 
+        render_numpy = np.transpose(render_numpy, (1, 2, 0))
+        np.save(os.path.join(color_npy_path, '{0:04d}'.format(idx) + ".npy"), render_numpy)
 
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):

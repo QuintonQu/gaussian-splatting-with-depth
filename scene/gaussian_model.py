@@ -20,6 +20,7 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+import csv
 
 class GaussianModel:
 
@@ -39,6 +40,14 @@ class GaussianModel:
         self.inverse_opacity_activation = inverse_sigmoid
 
         self.rotation_activation = torch.nn.functional.normalize
+
+        # Create a csv to save scale, rotation and mean3D
+
+        self.csv_file = open("scale_rotation_mean3D.csv", "w")
+        f = self.csv_file
+        writer = csv.writer(f)
+        writer.writerow(["mean3D_x", "mean3D_y", "mean3D_z", "scale_x", "scale_y", "scale_z", "rotation_w", "rotation_x", "rotation_y", "rotation_z"])
+        
 
 
     def __init__(self, sh_degree : int):
@@ -133,6 +142,9 @@ class GaussianModel:
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
+        if(fused_point_cloud.shape[0] <= 3):
+            scales = torch.ones((fused_point_cloud.shape[0], 3), device="cuda") * 0.0001
+            print("Warning: Not enough points to compute scales, setting to 0.0001")
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
 

@@ -407,16 +407,13 @@ def readMistubaCameras(path, white_background):
     color_file_paths = [f for f in os.listdir(color_folder_path) if os.path.isfile(os.path.join(color_folder_path, f)) and pattern.match(f)]
     color_file_paths.sort()
     
-    # # WARNING:  WARNING:  WARNING:  WARNING: Temperary fix for the Mitsuba scene
-    # color_file_paths = color_file_paths[:16]
-    # # WARNING:  WARNING:  WARNING:  WARNING:
-
     num_color_files = len(color_file_paths)
     
     # For each color file, we create a camera
     for idx in range(num_color_files):
         # Read the color file
         color_file = np.load(os.path.join(color_folder_path, color_file_paths[idx]))
+        image = Image.fromarray((color_file).astype(np.byte), "RGB")
         # Camera to world
         C2W = to_worlds[idx]
         # Mitsuba (x->left, y->up, z->forward), Colmap (x->right, y->down, z->forward)
@@ -426,17 +423,15 @@ def readMistubaCameras(path, white_background):
         T = W2C[:3, 3]
 
 
-        # Read the depth
+        # Read the depth (Statistically)
+        # depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))        
+        # bin_edges = np.linspace(13.0, 15.5, 21)
+        # hist, _ = np.histogram(depth.flatten(), bins=bin_edges)
+        # depth = hist / np.max(hist) 
+
+        # WARNING Only for test
         depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
-        # Depth = 0.0 is the background
-        if white_background:
-            color_file[depth < 0.0] = 0
-        image = Image.fromarray((color_file).astype(np.byte), "RGB")
-        depth[depth < 0.0] = -1.0
-        # print(f"Depth min: {np.min(depth[depth>0.0])}, max: {np.max(depth)}")
-        bin_edges = np.linspace(0, 8, num=201)
-        hist, _ = np.histogram(depth.flatten(), bins=bin_edges)
-        depth = hist / np.max(hist)
+        depth = depth.flatten() / depth.max()
 
         fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
         FovY = fovy 
@@ -467,11 +462,11 @@ def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhol
     ply_path = os.path.join(path, "points3d.ply")
     if not os.path.exists(ply_path):
         # Since this data set has no colmap data, we start with random points
-        num_pts = 100_000
+        num_pts = 1
         print(f"Generating random point cloud ({num_pts})...")
         
         # We create random points inside the bounds of the scenes
-        xyz = np.random.random((num_pts, 3)) * 8.0 - 4.0
+        xyz = np.random.random((num_pts, 3)) * 0.3
         shs = np.random.random((num_pts, 3)) / 255.0
         pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
 
