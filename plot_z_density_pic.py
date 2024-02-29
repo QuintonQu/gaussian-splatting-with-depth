@@ -7,11 +7,12 @@ parser = argparse.ArgumentParser(description='Plot the z-axis density frequency 
 parser.add_argument('-fp', type=str, help='Path to the folder containing the .npy files')
 parser.add_argument('-gt', type=str, help='Path to the folder containing the ground truth .npy files')
 parser.add_argument('-s', type=int, help='Start index of the file list (for tests)', default=0)
+parser.add_argument('-i', type=int, help='Index of the file to plot', default=0)
 args = parser.parse_args()
 
-folder_path = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.fp + '/train/ours_30000/z_density'
+folder_path = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.fp + '/train/ours_' + str(args.i) + '/z_density'
 folder_path_gt = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.gt + '/depth'
-save_folder_path = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.fp + '/train/ours_30000/z_compare'
+save_folder_path = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.fp + '/train/ours_' + str(args.i) + '/z_compare'
 
 # Create the save folder if it doesn't exist
 if not os.path.exists(save_folder_path):

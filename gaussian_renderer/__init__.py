@@ -14,6 +14,7 @@ import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
+import csv
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
@@ -64,6 +65,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         scales = pc.get_scaling
         rotations = pc.get_rotation
+
+    f = pc.csv_file
+    writer = csv.writer(f)
+    for i in range(len(means3D)):
+         writer.writerow([means3D[i][0].item(), means3D[i][1].item(), means3D[i][2].item(), scales[i][0].item(), scales[i][1].item(), scales[i][2].item(), rotations[i][0].item(), rotations[i][1].item(), rotations[i][2].item(), rotations[i][3].item(), opacity[i].item()])
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.

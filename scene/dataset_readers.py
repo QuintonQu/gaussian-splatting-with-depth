@@ -468,6 +468,7 @@ def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhol
                 else:
                     test_cam_infos.append(cam_infos_2d[i][j])
         test_cam_infos = []
+        # train_cam_infos = [train_cam_infos[40]]
 
     else:
         train_cam_infos = cam_infos

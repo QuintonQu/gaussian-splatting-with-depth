@@ -86,7 +86,11 @@ class Scene:
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"))
         else:
-            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+            try:
+                self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+            except:
+                print("Could not load point cloud from PCD file, trying to load from PLY file")
+                self.gaussians.load_ply(scene_info.ply_path)
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
