@@ -87,8 +87,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         z_density = render_pkg["z_density"]
-        # Min-max depth normalization
-        # z_density = z_density / z_density.max()
+        # Normalize per column
+        z_density = z_density / z_density.max(dim=1, keepdim=True)[0]
 
         # Loss
         gt_image = viewpoint_cam.original_image
@@ -99,8 +99,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             assert False
         Ll1 = l1_loss(image, gt_image)
         ZL = l1_loss(z_density, gt_depth) if gt_depth is not None else 0.0
-        # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        loss = ZL
+        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) + ZL / (iteration // 5000 + 1)
         loss.backward()
 
         iter_end.record()
@@ -122,10 +121,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 scene.save(iteration)
 
             # Densification
-            # if iteration < opt.densify_until_iter:
-            #     # Keep track of max radii in image-space for pruning
-            #     gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-            #     gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+            if iteration < opt.densify_until_iter:
+                # Keep track of max radii in image-space for pruning
+                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
