@@ -9,9 +9,9 @@ parser.add_argument('-gt', type=str, help='Path to the folder containing the gro
 parser.add_argument('-s', type=int, help='Start index of the file list (for tests)', default=0)
 args = parser.parse_args()
 
-folder_path = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.fp + '/train/ours_30000/z_density'
-folder_path_gt = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.gt + '/depth'
-save_folder_path = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.fp + '/train/ours_30000/z_compare'
+folder_path = './' + args.fp + '/train/ours_30000/z_density'
+folder_path_gt = './' + args.gt + '/depth'
+save_folder_path = './' + args.fp + '/train/ours_30000/z_compare'
 
 # Create the save folder if it doesn't exist
 if not os.path.exists(save_folder_path):
@@ -46,6 +46,7 @@ for file in file_list:
     # BLOCK: predicted by GS
     file_path = os.path.join(folder_path, file)
     data = np.load(file_path)
+    data = data.flatten()
 
     # Normalize the data to [0, 1] minmax
     # data = (data - np.min(data)) / (np.max(data) - np.min(data))
