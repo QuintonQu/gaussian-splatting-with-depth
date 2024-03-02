@@ -54,7 +54,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
-    opacity = torch.ones((1,1), dtype=opacity.dtype, device=opacity.device) * 0.999
     
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -71,9 +70,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         # print("gaussian_render __init__.py, rotations: ", rotations)
     
     # ["mean3D_x", "mean3D_y", "mean3D_z", "scale_x", "scale_y", "scale_z", "rotation_w", "rotation_x", "rotation_y", "rotation_z"]
-    f = pc.csv_file
-    writer = csv.writer(f)
-    writer.writerow([means3D[0][0].item(), means3D[0][1].item(), means3D[0][2].item(), scales[0][0].item(), scales[0][1].item(), scales[0][2].item(), rotations[0][0].item(), rotations[0][1].item(), rotations[0][2].item(), rotations[0][3].item()])
+    # f = pc.csv_file
+    # writer = csv.writer(f)
+    # writer.writerow([means3D[0][0].item(), means3D[0][1].item(), means3D[0][2].item(), scales[0][0].item(), scales[0][1].item(), scales[0][2].item(), rotations[0][0].item(), rotations[0][1].item(), rotations[0][2].item(), rotations[0][3].item()])
     # print(opacity[0].item())
 
 

@@ -17,6 +17,8 @@ from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 import numpy as np
+from scipy import signal
+from scipy.signal import tukey
 import json
 from pathlib import Path
 from plyfile import PlyData, PlyElement
@@ -25,6 +27,7 @@ from scene.gaussian_model import BasicPointCloud
 import math
 import re
 import cv2
+import json
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -69,9 +72,23 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
+
+def LFM(f_start=0, f_stop=30e3, Fs=100000, T=0.001, V_peak=1, alpha=0.1):
+    t = np.linspace(0, T, int(Fs*T))
+    turky_window = tukey(len(t), alpha)
+    f_inst = np.linspace(f_start, f_stop, len(t))
+    phase = 2 * np.pi * np.cumsum(f_inst) / Fs
+    return V_peak * np.sin(phase) * turky_window
+
+
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_folder=None):
     cam_infos = []
+
+    # #TODO: change this for the next time
+    # list_to_pop = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,35,36,43,44,45]
+
     for idx, key in enumerate(cam_extrinsics):
+
         sys.stdout.write('\r')
         # the exact output you're looking for:
         sys.stdout.write("Reading camera {}/{}".format(idx+1, len(cam_extrinsics)))
@@ -85,6 +102,8 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         uid = intr.id
         R = np.transpose(qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
+
+        # intr.model = "PINHOLE" ### check what happens exactly
 
         if intr.model=="SIMPLE_PINHOLE":
             focal_length_x = intr.params[0]
@@ -100,10 +119,45 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
+        print(image_name)
+
+        # #TODO: change this for the next time
+        # if int(image_name) in list_to_pop:
+        #     continue
+
+        if sonar_wave_folder is not None:
+            # handle the 0 degree case
+            angle = image_name
+            if angle == '0':
+                angle = '360'
+
+            sonar_file = f'Flight-{angle.zfill(6)}.npy'
+            sonar_wf_file = os.path.join(sonar_wave_folder, sonar_file)
+
+            depth = np.load(sonar_wf_file)
+
+            # wf = np.loadtxt(sonar_wf_file, delimiter=',')
+
+            # transmit_wave = LFM(f_start=0, f_stop=30e3, Fs=100000, T=0.001, V_peak=1, alpha=0.1)
+            # hilbert = signal.hilbert(wf)
+            # hilbert_fft = np.fft.fft(hilbert)
+            # trans_fft = np.fft.fft(transmit_wave,1000)
+            # analytic = np.abs(np.fft.ifft(hilbert_fft*np.conj(trans_fft)))
+
+
+            # bin_edges = np.linspace(0, 8, num=201)
+            # hist, _ = np.histogram(analytic, bins=bin_edges)
+            # wf = hist / np.max(hist)
+
+
         image = Image.open(image_path)
 
+        # cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+        #                       image_path=image_path, image_name=image_name, width=width, height=height,
+        #                       wf=wf if sonar_wave_folder is not None else None)
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height)
+                              image_path=image_path, image_name=image_name, width=width, height=height,
+                                depth=depth if sonar_wave_folder is not None else None)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -133,7 +187,8 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8):
+
+def readColmapSceneInfo(path, images, eval, llffhold=4):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -146,7 +201,12 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
     reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
+    if os.path.exists(os.path.join(path, "Sonar_raw")):
+        cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, 
+                                            images_folder=os.path.join(path, reading_dir), sonar_wave_folder=os.path.join(path, "Sonar_raw"))
+    else:
+        cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, 
+                                            images_folder=os.path.join(path, reading_dir))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
@@ -179,6 +239,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path)
     return scene_info
+
 
 def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png"):
     cam_infos = []
@@ -424,14 +485,14 @@ def readMistubaCameras(path, white_background):
 
 
         # Read the depth (Statistically)
-        # depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))        
-        # bin_edges = np.linspace(13.0, 15.5, 21)
-        # hist, _ = np.histogram(depth.flatten(), bins=bin_edges)
-        # depth = hist / np.max(hist) 
+        depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))        
+        bin_edges = np.linspace(0, 8, 201)
+        hist, _ = np.histogram(depth.flatten(), bins=bin_edges)
+        depth = hist / np.max(hist) 
 
         # WARNING Only for test
-        depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
-        depth = depth.flatten() / depth.max()
+        # depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
+        # depth = depth.flatten() / depth.max()
 
         fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
         FovY = fovy 
@@ -448,9 +509,22 @@ def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhol
     cam_infos = readMistubaCameras(path, white_background)
     nerf_normalization = getNerfppNorm(cam_infos)
 
+    if math.sqrt(len(cam_infos)) % 1 != 0:
+        raise ValueError("The length of cam_infos must be a perfect square.")
+    size = int(math.sqrt(len(cam_infos)))
+    cam_infos_2d = [cam_infos[i*size : (i+1)*size] for i in range(size)]
+
     if eval:
-        train_cam_infos = cam_infos[:llffhold**2]
-        test_cam_infos = cam_infos[llffhold**2:]
+        train_cam_infos = []
+        test_cam_infos = []
+        for i in range(size):
+            for j in range(size):
+                if (i % 4 == 0 or i==size-1) and (j % 4 == 0 or j==size-1):
+                    train_cam_infos.append(cam_infos_2d[i][j])
+                else:
+                    test_cam_infos.append(cam_infos_2d[i][j])
+        # test_cam_infos = []
+        # train_cam_infos = [train_cam_infos[10]]
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
@@ -462,11 +536,11 @@ def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhol
     ply_path = os.path.join(path, "points3d.ply")
     if not os.path.exists(ply_path):
         # Since this data set has no colmap data, we start with random points
-        num_pts = 1
+        num_pts = 100_000
         print(f"Generating random point cloud ({num_pts})...")
         
         # We create random points inside the bounds of the scenes
-        xyz = np.random.random((num_pts, 3)) * 0.3
+        xyz = np.random.random((num_pts, 3)) * 8 - 4
         shs = np.random.random((num_pts, 3)) / 255.0
         pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
 
@@ -483,9 +557,112 @@ def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhol
                            ply_path=ply_path)
     return scene_info
 
+
+# def readSonarCameras(path):
+#     cam_list = []
+#     # Color paths
+#     color_extrinsics_path = os.path.join(path, "cams/camera_extrinsics.json")
+#     color_intrinsics_path = os.path.join(path, "cams/camera_intrinsics.npy")
+#     color_folder_path = os.path.join(path, "images")
+#     # sonar waveform data
+#     sonar_wf_data = os.path.join(path, "Sonar_raw")
+    
+#     # Read the extrinsics and intrinsics
+#     extrinsics = json.load(open(color_extrinsics_path))
+#     intrinsics = np.load(color_intrinsics_path)
+#     intrinsics_inv = np.linalg.inv(intrinsics)
+    
+#     # Find how many color .npy file in the color folder
+#     color_file_paths = os.listdir(color_folder_path)
+    
+#     # For each color file, we create a camera
+#     for idx, file in enumerate(color_file_paths):
+        
+#         angle = file.split('.')[0]
+#         color_file = cv2.imread(os.path.join(color_folder_path, file))
+#         image = Image.fromarray((cv2.cvtColor(color_file, cv2.COLOR_BGR2RGB)).astype(np.byte), "RGB")
+#         height = color_file.shape[0]
+#         width = color_file.shape[1]
+#         # Read the extrinsics and intrinsics
+#         extrinsic = np.array(extrinsics[angle]).reshape(4, 4)
+#         fov_x, fov_y = _calculateFovs(height, width, intrinsics_inv)
+        
+#         # handle the 0 degree case
+#         if angle == '0':
+#             angle = '360'
+
+#         sonar_file = f'Flight-{angle.zfill(6)}.csv'
+#         sonar_wf_file = os.path.join(sonar_wf_data, sonar_file)
+
+#         wf = np.loadtxt(sonar_wf_file, delimiter=',')
+
+#         transmit_wave = LFM(f_start=0, f_stop=30e3, Fs=100000, T=0.001, V_peak=1, alpha=0.1)
+#         hilbert = signal.hilbert(wf)
+#         hilbert_fft = np.fft.fft(hilbert)
+#         trans_fft = np.fft.fft(transmit_wave,1000)
+#         analytic = np.fft.ifft(hilbert_fft*np.conj(trans_fft))
+#         print(f"Analytic min: {np.min(analytic)}, max: {np.max(analytic)}")
+
+#         bin_edges = np.linspace(0, 8, num=201)
+#         hist, _ = np.histogram(analytic, bins=bin_edges)
+#         wf = hist / np.max(hist)
+
+#         # depth = np.load(os.path.join(sonar_wf_data, color_file_paths[idx])).flatten()
+#         # bin_edges = np.linspace(0, 8, num=201)
+#         # hist, _ = np.histogram(depth, bins=bin_edges)
+#         # # Min-max hist to 0-1
+#         # depth = hist / np.max(hist)
+#         # Create the camera
+#         cam_info = CameraInfo(uid=idx, R=extrinsic[:3, :3], T=extrinsic[:3, 3], FovY=fov_y, FovX=fov_x, image=image,
+#                               image_path=os.path.join(color_folder_path, file), image_name=str(file), width=width, height=height, depth=wf)
+#         cam_list.append(cam_info)
+
+#     return cam_list
+
+# def readSonarSceneInfo(path, eval, llffhold=2):
+#     cam_infos = readSonarCameras(path)
+#     nerf_normalization = getNerfppNorm(cam_infos)
+
+#     if eval:
+#         train_cam_infos = cam_infos[:llffhold**2]
+#         test_cam_infos = cam_infos[llffhold**2:]
+#     else:
+#         train_cam_infos = cam_infos
+#         test_cam_infos = []
+    
+#     print("Train set size: ", len(train_cam_infos))
+#     print("Test set size: ", len(test_cam_infos))
+
+#     # Of course we do not have point cloud for point3d
+#     ply_path = os.path.join(path, "points3d.ply")
+#     if not os.path.exists(ply_path):
+#         # Since this data set has no colmap data, we start with random points
+#         num_pts = 100_000
+#         print(f"Generating random point cloud ({num_pts})...")
+        
+#         # We create random points inside the bounds of the scenes
+#         xyz = np.random.random((num_pts, 3)) * 8.0 - 4.0
+#         shs = np.random.random((num_pts, 3)) / 255.0
+#         pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
+
+#         storePly(ply_path, xyz, SH2RGB(shs) * 255)
+#     try:
+#         pcd = fetchPly(ply_path)
+#     except:
+#         pcd = None
+
+#     scene_info = SceneInfo(point_cloud=pcd,
+#                            train_cameras=train_cam_infos,
+#                            test_cameras=test_cam_infos,
+#                            nerf_normalization=nerf_normalization,
+#                            ply_path=ply_path)
+#     return scene_info
+
+
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
     "Blender" : readNerfSyntheticInfo,
     "ToRF" : readToRFInfo,
-    "Mitsuba" : readMitsubaSceneInfo
+    "Mitsuba" : readMitsubaSceneInfo,
+    # "Sonar" : readSonarSceneInfo
 }

@@ -10,6 +10,7 @@ parser.add_argument('-s', type=int, help='Start index of the file list (for test
 args = parser.parse_args()
 
 folder_path_gt = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.gt + '/depth'
+folder_path_gt = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.gt + '/Sonar_raw'
 if args.fp is None:
     folder_path = None
     print("No prediction folder path is given")
@@ -32,21 +33,23 @@ file_list.sort()
 
 # Iterate over each file and plot its contents
 for file in file_list:
-    num = int(file.split('.')[0])
-    num += args.s
-    new_file = str(num).zfill(4) + '.npy'
+    # num = int(file.split('.')[0])
+    # num += args.s
+    # new_file = str(num).zfill(4) + '.npy'
+    new_file = file
 
     # Flatten the data
     data = np.load(os.path.join(folder_path_gt, new_file))
     flattened_data = data.flatten()
-    data = data / np.max(data)
+    # data = data / np.max(data)
 
     # Calculate the histogram
-    bin_edges = np.linspace(13, 15.5, 51)
+    # bin_edges = np.linspace(13, 15.5, 51)
     # hist, bin_edges = np.histogram(flattened_data, bins=bin_edges)
 
     # Normalize the histogram to [0, 1] minmax
     # hist = hist / np.max(hist)
+    bin_edges = np.linspace(0, 8, 201)
 
     # Plot the histogram as a line graph
     plt.plot(bin_edges[:-1], flattened_data, label="gt_depth")

@@ -43,10 +43,10 @@ class GaussianModel:
 
         # Create a csv to save scale, rotation and mean3D
 
-        self.csv_file = open("scale_rotation_mean3D.csv", "w")
-        f = self.csv_file
-        writer = csv.writer(f)
-        writer.writerow(["mean3D_x", "mean3D_y", "mean3D_z", "scale_x", "scale_y", "scale_z", "rotation_w", "rotation_x", "rotation_y", "rotation_z"])
+        # self.csv_file = open("scale_rotation_mean3D.csv", "w")
+        # f = self.csv_file
+        # writer = csv.writer(f)
+        # writer.writerow(["mean3D_x", "mean3D_y", "mean3D_z", "scale_x", "scale_y", "scale_z", "rotation_w", "rotation_x", "rotation_y", "rotation_z"])
         
 
 
