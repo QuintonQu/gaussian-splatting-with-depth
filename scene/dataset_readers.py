@@ -487,23 +487,6 @@ def readMistubaCameras(path, h_res, w_res):
 
         # Read the depth (Statistically)
         depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
-        h_res_window = depth.shape[0] // h_res
-        w_res_window = depth.shape[1] // w_res
-        bin_edges = np.linspace(0, 8, num=201)
-        hist_h = np.zeros((h_res, len(bin_edges)-1))
-        for i in range(h_res):
-            hist_h[i], _ = np.histogram(depth[i * h_res_window: (i + 1) * h_res_window], bins=bin_edges)
-        hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
-        hist_h = hist_h.T
-        hist_w = np.zeros((w_res, len(bin_edges)-1))
-        for i in range(w_res):
-            hist_w[i], _ = np.histogram(depth[:, i * w_res_window : (i + 1) * w_res_window], bins=bin_edges)
-        hist_w = hist_w / hist_w.max(axis=1, keepdims=True)
-        hist_w = hist_w.T
-
-        # WARNING Only for test
-        # depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
-        # depth = depth.flatten() / depth.max()
 
         fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
         FovY = fovy 
@@ -511,7 +494,7 @@ def readMistubaCameras(path, h_res, w_res):
 
         # Create the camera
         cam_info = CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=os.path.join(color_folder_path, color_file_paths[idx]), image_name=str(color_file_paths[idx]), width=image.size[0], height=image.size[1], depth=[hist_h, hist_w])
+                              image_path=os.path.join(color_folder_path, color_file_paths[idx]), image_name=str(color_file_paths[idx]), width=image.size[0], height=image.size[1], depth=[depth, depth])
         cam_list.append(cam_info)
 
     return cam_list
