@@ -140,26 +140,13 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_
 
         if depth_folder is not None:
             depth = np.load(os.path.join(depth_folder, image_name + ".npy"))
-            h_res_window = depth.shape[0] // h_res
-            w_res_window = depth.shape[1] // w_res
-            bin_edges = np.linspace(0, 8, num=201)
-            hist_h = np.zeros((h_res, len(bin_edges)-1))
-            for i in range(h_res):
-                hist_h[i], _ = np.histogram(depth[i * h_res_window: (i + 1) * h_res_window], bins=bin_edges)
-            hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
-            hist_h = hist_h.T
-            hist_w = np.zeros((w_res, len(bin_edges)-1))
-            for i in range(w_res):
-                hist_w[i], _ = np.histogram(depth[:, i * w_res_window : (i + 1) * w_res_window], bins=bin_edges)
-            hist_w = hist_w / hist_w.max(axis=1, keepdims=True)
-            hist_w = hist_w.T
 
         # cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
         #                       image_path=image_path, image_name=image_name, width=width, height=height,
         #                       wf=wf if sonar_wave_folder is not None else None)
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height,
-                                depth=[hist_h, hist_w] if depth_folder is not None else None)
+                                depth=[depth, depth] if depth_folder is not None else None)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
