@@ -84,28 +84,34 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        z_density_h = render_pkg["z_density_h"]
-        z_density_w = render_pkg["z_density_w"]
-        # Min-max depth normalization
-        z_density_h = z_density_h / (z_density_h.max(dim=0, keepdim=True)[0] + 1e-10)
-        z_density_w = z_density_w / (z_density_w.max(dim=0, keepdim=True)[0] + 1e-10)
-
         # Loss
         gt_image = viewpoint_cam.original_image
         gt_density_h = viewpoint_cam.z_density_h if viewpoint_cam.z_density_h is not None else None
         gt_density_w = viewpoint_cam.z_density_w if viewpoint_cam.z_density_w is not None else None
-        height = z_density_h.shape[1]
-        width = z_density_w.shape[1]
-        # Print something if the depth is not available
-        if gt_density_h is None or gt_density_w is None:
-            print("Warning: Depth is not available for this viewpoint")
-            assert False
+        height = gt_image.shape[1]
+        width = gt_image.shape[2]
+
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
+        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"] 
+
+        h_res_window = height // dataset.h_res
+        w_res_window = width // dataset.w_res
+        
+        z_density_h = render_pkg["z_density_h"].unfold(1, h_res_window, h_res_window).sum(dim=2)
+        z_density_w = render_pkg["z_density_w"].unfold(1, w_res_window, w_res_window).sum(dim=2)
+        # Min-max depth normalization
+        z_density_h = z_density_h / (z_density_h.max(dim=0, keepdim=True)[0] + 1e-10)
+        z_density_w = z_density_w / (z_density_w.max(dim=0, keepdim=True)[0] + 1e-10)
+        assert z_density_h.shape[1] == dataset.h_res
+        assert z_density_w.shape[1] == dataset.w_res
+
         Ll1 = l1_loss(image, gt_image)
-        ZL = (l1_loss(z_density_h, gt_density_h) * width + l1_loss(z_density_w, gt_density_w) * height) / (height + width)
-        # ZL = l1_loss(z_density_h, gt_density_h)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) + ZL / (iteration // 5000 + 1)
+        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) 
+        ZL = torch.zeros(1, dtype=torch.float32, device="cuda")
+        if gt_density_h is not None and gt_density_w is not None:
+            ZL = (l1_loss(z_density_h, gt_density_h) * dataset.w_res + l1_loss(z_density_w, gt_density_w) * dataset.h_res) / (dataset.h_res + dataset.w_res)
+            if opt.depth_loss:
+                loss += 2 * ZL / (1.8 ** (iteration // opt.opacity_reset_interval + 1))
         loss.backward()
 
         iter_end.record()
@@ -227,8 +233,9 @@ if __name__ == "__main__":
     args.save_iterations.append(args.iterations)
 
     # WARNING: Modifying parameters here
-    test_iterations = range(4000, args.iterations + 1, 1000)
+    test_iterations = range(5000, args.iterations + 1, 3000)
     args.test_iterations = [i for i in test_iterations if i < args.iterations]
+    args.test_iterations.append(args.iterations)
     
     print("Optimizing " + args.model_path)
 

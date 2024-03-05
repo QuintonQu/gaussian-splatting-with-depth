@@ -41,7 +41,7 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
-    depth: list = None
+    depth: list = [None, None]
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -82,7 +82,7 @@ def LFM(f_start=0, f_stop=30e3, Fs=100000, T=0.001, V_peak=1, alpha=0.1):
     return V_peak * np.sin(phase) * turky_window
 
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_folder=None):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_folder=None, depth_folder=None, h_res=1, w_res=1):
     cam_infos = []
 
     # #TODO: change this for the next time
@@ -120,45 +120,46 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
-        print(image_name)
 
         # #TODO: change this for the next time
         # if int(image_name) in list_to_pop:
         #     continue
 
-        if sonar_wave_folder is not None:
-            # handle the 0 degree case
-            angle = image_name
-            if angle == '0':
-                angle = '360'
+        # if sonar_wave_folder is not None:
+        #     # handle the 0 degree case
+        #     angle = image_name
+        #     if angle == '0':
+        #         angle = '360'
 
-            sonar_file = f'Flight-{angle.zfill(6)}.npy'
-            sonar_wf_file = os.path.join(sonar_wave_folder, sonar_file)
+        #     sonar_file = f'Flight-{angle.zfill(6)}.npy'
+        #     sonar_wf_file = os.path.join(sonar_wave_folder, sonar_file)
 
-            depth = np.load(sonar_wf_file)
-
-            # wf = np.loadtxt(sonar_wf_file, delimiter=',')
-
-            # transmit_wave = LFM(f_start=0, f_stop=30e3, Fs=100000, T=0.001, V_peak=1, alpha=0.1)
-            # hilbert = signal.hilbert(wf)
-            # hilbert_fft = np.fft.fft(hilbert)
-            # trans_fft = np.fft.fft(transmit_wave,1000)
-            # analytic = np.abs(np.fft.ifft(hilbert_fft*np.conj(trans_fft)))
-
-
-            # bin_edges = np.linspace(0, 8, num=201)
-            # hist, _ = np.histogram(analytic, bins=bin_edges)
-            # wf = hist / np.max(hist)
-
+        #     depth = np.load(sonar_wf_file)
 
         image = Image.open(image_path)
+
+        if depth_folder is not None:
+            depth = np.load(os.path.join(depth_folder, image_name + ".npy"))
+            h_res_window = depth.shape[0] // h_res
+            w_res_window = depth.shape[1] // w_res
+            bin_edges = np.linspace(0, 8, num=201)
+            hist_h = np.zeros((h_res, len(bin_edges)-1))
+            for i in range(h_res):
+                hist_h[i], _ = np.histogram(depth[i * h_res_window: (i + 1) * h_res_window], bins=bin_edges)
+            hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
+            hist_h = hist_h.T
+            hist_w = np.zeros((w_res, len(bin_edges)-1))
+            for i in range(w_res):
+                hist_w[i], _ = np.histogram(depth[:, i * w_res_window : (i + 1) * w_res_window], bins=bin_edges)
+            hist_w = hist_w / hist_w.max(axis=1, keepdims=True)
+            hist_w = hist_w.T
 
         # cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
         #                       image_path=image_path, image_name=image_name, width=width, height=height,
         #                       wf=wf if sonar_wave_folder is not None else None)
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height,
-                                depth=depth if sonar_wave_folder is not None else None)
+                                depth=[hist_h, hist_w] if depth_folder is not None else None)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -189,7 +190,7 @@ def storePly(path, xyz, rgb):
     ply_data.write(path)
 
 
-def readColmapSceneInfo(path, images, eval, llffhold=4):
+def readColmapSceneInfo(path, images, eval, llffhold=4, h_res=1, w_res=1):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -201,18 +202,18 @@ def readColmapSceneInfo(path, images, eval, llffhold=4):
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
-    reading_dir = "images" if images == None else images
-    if os.path.exists(os.path.join(path, "Sonar_raw")):
+    reading_dir = "color" if images == None else images
+    if os.path.exists(os.path.join(path, "depth")):
         cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, 
-                                            images_folder=os.path.join(path, reading_dir), sonar_wave_folder=os.path.join(path, "Sonar_raw"))
+                                            images_folder=os.path.join(path, reading_dir), depth_folder=os.path.join(path, "depth"), h_res=h_res, w_res=w_res)
     else:
         cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, 
                                             images_folder=os.path.join(path, reading_dir))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx < 39]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx >= 39]
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
@@ -450,7 +451,7 @@ def readToRFInfo(path, white_background, eval, extension=".npy", llffhold=8):
 
 
 # BLOCK: Read Mitsuba Scene
-def readMistubaCameras(path, white_background):
+def readMistubaCameras(path, h_res, w_res):
     cam_list = []
     # Color paths
     fovx_path = os.path.join(path, "camera/fov.npy")
@@ -485,18 +486,18 @@ def readMistubaCameras(path, white_background):
         T = W2C[:3, 3]
 
         # Read the depth (Statistically)
-        h_res_scale = 5;
-        w_res_scale = 5;
         depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
+        h_res_window = depth.shape[0] // h_res
+        w_res_window = depth.shape[1] // w_res
         bin_edges = np.linspace(0, 8, num=201)
-        hist_h = np.zeros((depth.shape[0] // h_res_scale, len(bin_edges)-1))
-        for i in range(depth.shape[0] // h_res_scale):
-            hist_h[i], _ = np.histogram(depth[i * h_res_scale: (i + 1) * h_res_scale], bins=bin_edges)
+        hist_h = np.zeros((h_res, len(bin_edges)-1))
+        for i in range(h_res):
+            hist_h[i], _ = np.histogram(depth[i * h_res_window: (i + 1) * h_res_window], bins=bin_edges)
         hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
         hist_h = hist_h.T
-        hist_w = np.zeros((depth.shape[1] // w_res_scale, len(bin_edges)-1))
-        for i in range(depth.shape[1] // w_res_scale):
-            hist_w[i], _ = np.histogram(depth[:, i * w_res_scale : (i + 1) * w_res_scale], bins=bin_edges)
+        hist_w = np.zeros((w_res, len(bin_edges)-1))
+        for i in range(w_res):
+            hist_w[i], _ = np.histogram(depth[:, i * w_res_window : (i + 1) * w_res_window], bins=bin_edges)
         hist_w = hist_w / hist_w.max(axis=1, keepdims=True)
         hist_w = hist_w.T
 
@@ -515,8 +516,8 @@ def readMistubaCameras(path, white_background):
 
     return cam_list
 
-def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhold=8):
-    cam_infos = readMistubaCameras(path, white_background)
+def readMitsubaSceneInfo(path, eval, h_res, w_res):
+    cam_infos = readMistubaCameras(path, h_res, w_res)
     nerf_normalization = getNerfppNorm(cam_infos)
 
     if math.sqrt(len(cam_infos)) % 1 != 0:

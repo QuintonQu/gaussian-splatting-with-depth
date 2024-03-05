@@ -50,7 +50,7 @@ class Scene:
             scene_info = sceneLoadTypeCallbacks["ToRF"](args.source_path, args.white_background, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "camera/to_worlds.npy")):
             print("Found camera/to_worlds.npy, assuming Mitsuba dataset!")
-            scene_info = sceneLoadTypeCallbacks["Mitsuba"](args.source_path, args.white_background, args.eval)
+            scene_info = sceneLoadTypeCallbacks["Mitsuba"](args.source_path, args.eval, args.h_res, args.w_res)
         else:
             assert False, "Could not recognize scene type!"
 
