@@ -111,7 +111,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if gt_density_h is not None and gt_density_w is not None:
             ZL = (l1_loss(z_density_h, gt_density_h) * dataset.w_res + l1_loss(z_density_w, gt_density_w) * dataset.h_res) / (dataset.h_res + dataset.w_res)
             if opt.depth_loss:
-                loss += ZL / (1.8 ** (iteration // opt.opacity_reset_interval + 1))
+                loss += 0.1 * ZL / (1.5 ** (iteration // opt.opacity_reset_interval + 1))
         loss.backward()
 
         iter_end.record()
