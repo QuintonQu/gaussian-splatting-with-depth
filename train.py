@@ -86,7 +86,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Loss
         gt_image = viewpoint_cam.original_image
-        print("gt_image shape: ", gt_image.shape)
         gt_density_h = viewpoint_cam.z_density_h if viewpoint_cam.z_density_h is not None else None
         gt_density_w = viewpoint_cam.z_density_w if viewpoint_cam.z_density_w is not None else None
         height = gt_image.shape[1]
@@ -97,11 +96,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         z_density_h = render_pkg["z_density_h"]
         z_density_h = z_density_h.unfold(0, 3, 3).unfold(1, 3, 3).mean(dim=[2,3])
-        gt_density_h[gt_density_h < 0] = z_density_h[gt_density_h < 0]
+        gt_density_h_new = torch.where(gt_density_h < 0, z_density_h, gt_density_h)
 
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        ZL = l1_loss(z_density_h, gt_density_h) 
+        ZL = l1_loss(z_density_h, gt_density_h_new)
         loss += ZL
         # ZL = torch.zeros(1, dtype=torch.float32, device="cuda")
         # if gt_density_h is not None and gt_density_w is not None:
