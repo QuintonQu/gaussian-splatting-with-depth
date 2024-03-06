@@ -95,12 +95,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"] 
         
         z_density_h = render_pkg["z_density_h"]
-        z_density_h = z_density_h.unfold(0, 3, 3).unfold(1, 3, 3).mean(dim=[2,3])
-        gt_density_h_new = torch.where(gt_density_h < 0, z_density_h, gt_density_h)
+        # z_density_h = z_density_h.unfold(0, 3, 3).unfold(1, 3, 3).mean(dim=[2,3])
+        # gt_density_h_new = torch.where(gt_density_h < 0, z_density_h, gt_density_h)
 
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        ZL = l1_loss(z_density_h, gt_density_h_new)
+        ZL = l1_loss(z_density_h, gt_density_h)
         loss += ZL
         # ZL = torch.zeros(1, dtype=torch.float32, device="cuda")
         # if gt_density_h is not None and gt_density_w is not None:
