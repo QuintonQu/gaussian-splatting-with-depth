@@ -76,7 +76,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        # viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
         # Render
         if (iteration - 1) == debug_from:
@@ -84,6 +84,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
+
+        loss = torch.zeros(1, dtype=torch.float32, device="cuda")
+        ZL = torch.zeros(1, dtype=torch.float32, device="cuda")
+        Ll1 = torch.zeros(1, dtype=torch.float32, device="cuda")
+
+        # for _ in range(2):
+        viewpoint_cam = viewpoint_stack.pop(0)
         # Loss
         gt_image = viewpoint_cam.original_image
         gt_density_h = viewpoint_cam.z_density_h if viewpoint_cam.z_density_h is not None else None
@@ -96,17 +103,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         z_density_h = render_pkg["z_density_h"]
         # z_density_h = z_density_h.unfold(0, 3, 3).unfold(1, 3, 3).mean(dim=[2,3])
-        # gt_density_h_new = torch.where(gt_density_h < 0, z_density_h, gt_density_h)
-
-        Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        ZL = l1_loss(z_density_h, gt_density_h)
-        loss += ZL
-        # ZL = torch.zeros(1, dtype=torch.float32, device="cuda")
-        # if gt_density_h is not None and gt_density_w is not None:
-        #     ZL = (l1_loss(z_density_h, gt_density_h) * dataset.w_res + l1_loss(z_density_w, gt_density_w) * dataset.h_res) / (dataset.h_res + dataset.w_res)
-        #     if opt.depth_loss:
-        #         loss += 0.1 * ZL / (1.8 ** (iteration // opt.opacity_reset_interval + 1))
+        
+        if gt_density_h is not None and gt_density_w is not None:
+            gt_density_h_new = torch.where(gt_density_h < 0, z_density_h, gt_density_h)
+            ZL = l1_loss(z_density_h, gt_density_h_new)
+            loss = 2 * ZL / (1.5 ** (iteration // opt.opacity_reset_interval))
+        else:
+            Ll1 = l1_loss(image, gt_image)
+            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         loss.backward()
 
         iter_end.record()
@@ -188,7 +192,11 @@ def training_report(tb_writer, iteration, Ll1, ZL, loss, l1_loss, elapsed, testi
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
                 psnr_test = 0.0
+                count = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
+                    if viewpoint.z_density_h is not None:
+                        continue
+                    count += 1
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     if tb_writer and (idx < 5):
@@ -197,8 +205,8 @@ def training_report(tb_writer, iteration, Ll1, ZL, loss, l1_loss, elapsed, testi
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
-                psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])          
+                psnr_test /= count
+                l1_test /= count
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)

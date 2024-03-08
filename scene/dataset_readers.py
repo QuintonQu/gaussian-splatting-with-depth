@@ -140,14 +140,28 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_
 
         if depth_folder is not None:
             depth = np.load(os.path.join(depth_folder, image_name + ".npy"))
+        depth_path = os.path.join(depth_folder, image_name + ".npy")
+        
+        FovX_depth = np.deg2rad(58.335225021731546)
+        FovY_depth = focal2fov(fov2focal(FovX_depth, 240), 180)
+        T_depth = T + np.array([0.038, -0.012, 0])
+        R_depth_x = np.array([[1, 0, 0], [0, np.cos(np.deg2rad(-2.5)), -np.sin(np.deg2rad(-2.5))], [0, np.sin(np.deg2rad(-2.5)), np.cos(np.deg2rad(-2.5))]])
+        # # rotate around y
+        R_depth_y = np.array([[np.cos(np.deg2rad(-0.5)), 0, np.sin(np.deg2rad(-0.5))], [0, 1, 0], [-np.sin(np.deg2rad(-0.5)), 0, np.cos(np.deg2rad(-0.5))]])
+        R_depth = (R_depth_y @ R_depth_x @ R.T).T
 
         # cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
         #                       image_path=image_path, image_name=image_name, width=width, height=height,
         #                       wf=wf if sonar_wave_folder is not None else None)
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height,
-                                depth=[depth, depth] if depth_folder is not None else None)
+                                depth=None)
         cam_infos.append(cam_info)
+
+        depth_info = CameraInfo(uid=uid, R=R_depth, T=T_depth, FovY=FovY_depth, FovX=FovX_depth, image=Image.fromarray(depth, "L"),
+                                image_path=depth_path, image_name=image_name, width=240, height=180,
+                                    depth=[depth, depth])
+        cam_infos.append(depth_info)
     sys.stdout.write('\n')
     return cam_infos
 
@@ -199,8 +213,8 @@ def readColmapSceneInfo(path, images, eval, llffhold=4, h_res=1, w_res=1):
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx < 4*13]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx >= 4*13]
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx < 3*13*2]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx >= 3*13*2]
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
