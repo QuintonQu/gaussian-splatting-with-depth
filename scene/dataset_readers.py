@@ -430,22 +430,13 @@ def readMistubaCameras(path, white_background):
         depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
         image = Image.fromarray((color_file).astype(np.byte), "RGB")
 
-        # print(f"Depth min: {np.min(depth[depth>0.0])}, max: {np.max(depth)}")
-        bin_edges = np.linspace(0, 8, num=201)
-        hist = np.zeros((depth.shape[0] // depth.shape[0], len(bin_edges)-1))
-        for i in range(depth.shape[0] // depth.shape[0]):
-            hist[i], _ = np.histogram(depth[i*depth.shape[0] : i*depth.shape[0] + depth.shape[0]], bins=bin_edges)
-            # if i > 0:
-            #     hist[i-1] += hist[i]
-        hist = hist / hist.max(axis=1, keepdims=True)
-
         fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
         FovY = fovy 
         FovX = fovx
 
         # Create the camera
         cam_info = CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=os.path.join(color_folder_path, color_file_paths[idx]), image_name=str(color_file_paths[idx]), width=image.size[0], height=image.size[1], depth=hist)
+                              image_path=os.path.join(color_folder_path, color_file_paths[idx]), image_name=str(color_file_paths[idx]), width=image.size[0], height=image.size[1], depth=depth)
         cam_list.append(cam_info)
 
     return cam_list
