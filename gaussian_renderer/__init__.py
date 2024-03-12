@@ -57,7 +57,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     opacity = pc.get_opacity
     
     # WARNING  WARNING  WARNING ONLY FOR TEST
-    opacity = torch.ones_like(opacity) * 3.0
+    # opacity = torch.ones_like(opacity) * 3.0
     # WARNING  WARNING  WARNING ONLY FOR TEST
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -72,10 +72,10 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations = pc.get_rotation
 
     # WARNING  WARNING  WARNING ONLY FOR TEST
-    f = pc.csv_file
-    writer = csv.writer(f)
-    for i in range(len(means3D)):
-         writer.writerow([means3D[i][0].item(), means3D[i][1].item(), means3D[i][2].item(), scales[i][0].item(), scales[i][1].item(), scales[i][2].item(), rotations[i][0].item(), rotations[i][1].item(), rotations[i][2].item(), rotations[i][3].item(), opacity[i].item()])
+    # f = pc.csv_file
+    # writer = csv.writer(f)
+    # for i in range(len(means3D)):
+    #      writer.writerow([means3D[i][0].item(), means3D[i][1].item(), means3D[i][2].item(), scales[i][0].item(), scales[i][1].item(), scales[i][2].item(), rotations[i][0].item(), rotations[i][1].item(), rotations[i][2].item(), rotations[i][3].item(), opacity[i].item()])
     # WARNING  WARNING  WARNING ONLY FOR TEST
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors

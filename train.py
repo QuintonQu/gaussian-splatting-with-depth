@@ -96,10 +96,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             print("Warning: Depth is not available for this viewpoint")
             assert False
         Ll1 = l1_loss(image, gt_image)
-        ZL = l2_loss(z_density, gt_depth) if gt_depth is not None else 0.0
+        ZL = l1_loss(z_density, gt_depth) if gt_depth is not None else 0.0
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         if opt.depth_loss and gt_depth is not None:
-            loss += ZL
+            loss += ZL * 3
         loss.backward()
 
         iter_end.record()
@@ -108,7 +108,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Progress bar
             ema_loss_for_log_rgb = 0.4 * Ll1.item() + 0.6 * ema_loss_for_log_rgb
             ema_loss_for_log_z = 0.4 * ZL.item() + 0.6 * ema_loss_for_log_z
-            max_radii = gaussians.max_radii2D[visibility_filter]
             if iteration % 10 == 0:
                 progress_bar.set_postfix({"RGB_Loss": f"{ema_loss_for_log_rgb:.{7}f}", "Z_Loss": f"{ema_loss_for_log_z:.{7}f}"})
                 progress_bar.update(10)
@@ -116,23 +115,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, ZL, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), max_radii)
+            training_report(tb_writer, iteration, Ll1, ZL, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), radii[visibility_filter])
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
             # Densification
-            # if iteration < opt.densify_until_iter:
-            #     # Keep track of max radii in image-space for pruning
-            #     gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-            #     gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+            if iteration < opt.densify_until_iter:
+                # Keep track of max radii in image-space for pruning
+                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-            #     if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
-            #         size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-            #         gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                    size_threshold = 20 if iteration > opt.opacity_reset_interval else None
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                 
-            #     if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
-            #         gaussians.reset_opacity()
+                if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                    gaussians.reset_opacity()
             
             # Optimizer step
             if iteration < opt.iterations:
@@ -165,13 +164,15 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, ZL, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, max_radii):
+def training_report(tb_writer, iteration, Ll1, ZL, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, radii):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/rgb_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/z_loss', ZL.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
-        tb_writer.add_scalar('max_radii', max_radii, iteration)
+        tb_writer.add_scalar('max_radii', torch.max(radii), iteration)
+        tb_writer.add_scalar('mean_radii', torch.mean(radii.float()), iteration)
+        tb_writer.add_scalar('median_radii', torch.median(radii), iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
@@ -223,8 +224,9 @@ if __name__ == "__main__":
     args.save_iterations.append(args.iterations)
 
     # WARNING: Modifying parameters here
-    # test_iterations = range(4000, args.iterations + 1, 1000)
-    # args.test_iterations = [i for i in test_iterations if i < args.iterations]
+    test_iterations = range(4000, args.iterations + 1, 1000)
+    args.test_iterations = [i for i in test_iterations if i < args.iterations]
+    args.test_iterations.append(args.iterations)
     
     print("Optimizing " + args.model_path)
 

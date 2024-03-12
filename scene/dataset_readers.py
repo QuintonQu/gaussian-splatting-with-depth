@@ -476,12 +476,12 @@ def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhol
     ply_path = os.path.join(path, "points3d.ply")
     if not os.path.exists(ply_path):
         # Since this data set has no colmap data, we start with random points
-        num_pts = 1
+        num_pts = 100_000
         print(f"Generating random point cloud ({num_pts})...")
         
         # We create random points inside the bounds of the scenes
-        # xyz = np.random.random((num_pts, 3)) * 8.0 - 4.0
-        xyz = np.zeros((num_pts, 3))
+        xyz = np.random.random((num_pts, 3)) * 8.0 - 4.0
+        # xyz = np.zeros((num_pts, 3))
         shs = np.random.random((num_pts, 3)) / 255.0
         pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
 
