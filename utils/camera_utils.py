@@ -11,14 +11,17 @@
 
 from scene.cameras import Camera
 import numpy as np
-from utils.general_utils import PILtoTorch
+from utils.general_utils import PILtoTorch, numpyToTorch
 from utils.graphics_utils import fov2focal
 
 WARNED = False
 
 def loadCam(args, id, cam_info, resolution_scale):
-    orig_w, orig_h = cam_info.image.size
-
+    try:
+        orig_w, orig_h = cam_info.image.size
+    except:
+        orig_w, orig_h = cam_info.image.shape[1], cam_info.image.shape[0]
+    
     if args.resolution in [1, 2, 4, 8]:
         resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
     else:  # should be a type that converts to float
@@ -38,18 +41,25 @@ def loadCam(args, id, cam_info, resolution_scale):
         scale = float(global_down) * float(resolution_scale)
         resolution = (int(orig_w / scale), int(orig_h / scale))
 
-    resized_image_rgb = PILtoTorch(cam_info.image, resolution)
 
-    gt_image = resized_image_rgb[:3, ...]
+    if cam_info.is_sonar:
+        im = cam_info.image
+        # convert numpy im to torch
+        gt_image = resized_image_rgb = numpyToTorch(im)
+    else:
+        resized_image_rgb = PILtoTorch(cam_info.image, resolution)
+        gt_image = resized_image_rgb[:3, ...]
+
     loaded_mask = None
 
     if resized_image_rgb.shape[1] == 4:
         loaded_mask = resized_image_rgb[3:4, ...]
-
+    
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, depth=cam_info.depth)
+                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, depth=cam_info.depth,
+                  is_sonar=cam_info.is_sonar)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []

@@ -30,7 +30,9 @@ except ImportError:
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
+
     tb_writer = prepare_output_and_logger(dataset)
+
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
@@ -49,6 +51,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log_z = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    Z_total = 0.0
     for iteration in range(first_iter, opt.iterations + 1):        
         # if network_gui.conn == None:
         #     network_gui.try_connect()
@@ -76,6 +79,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
+        
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
         # Render
@@ -85,42 +89,86 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
+        is_sonar = viewpoint_cam.is_sonar
+       
+        
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         z_density_h = render_pkg["z_density_h"]
-        z_density_w = render_pkg["z_density_w"]
+        z_density_w = None #render_pkg["z_density_w"]
+
+        #print(z_density_h.shape)
+        #print(torch.count_nonzero(z_density_h, dim=None))
+        #print(torch.count_nonzero(z_density_w, dim=None))
+        
+
+        #if z_density_h.numel() == 0:
+        #    z_density_h = None 
+        #if z_density_w.numel() == 0:
+        #    z_density_w = None
+
+        #z_density_h, z_density_w = z_density_w, z_density_h
         # Min-max depth normalization
-        z_density_h = z_density_h / (z_density_h.max(dim=0, keepdim=True)[0] + 1e-10)
-        z_density_w = z_density_w / (z_density_w.max(dim=0, keepdim=True)[0] + 1e-10)
+        if z_density_h is not None:
+            z_density_h = z_density_h / (z_density_h.max(dim=0, keepdim=True)[0] + 1e-10)
+        if z_density_w is not None:
+            z_density_w = z_density_w / (z_density_w.max(dim=0, keepdim=True)[0] + 1e-10)
 
         # Loss
         gt_image = viewpoint_cam.original_image
-        gt_density_h = viewpoint_cam.z_density_h if viewpoint_cam.z_density_h is not None else None
-        gt_density_w = viewpoint_cam.z_density_w if viewpoint_cam.z_density_w is not None else None
-        height = z_density_h.shape[1]
-        width = z_density_w.shape[1]
+        
+        if z_density_h is not None:
+            gt_density_h = viewpoint_cam.z_density_h if viewpoint_cam.z_density_h is not None else None
+            height = z_density_h.shape[1]
+        if z_density_w is not None:
+            gt_density_w = viewpoint_cam.z_density_w if viewpoint_cam.z_density_w is not None else None
+            width = z_density_w.shape[1]
+        
         # Print something if the depth is not available
-        if gt_density_h is None or gt_density_w is None:
-            print("Warning: Depth is not available for this viewpoint")
-            assert False
-        Ll1 = l1_loss(image, gt_image)
-        ZL = (l1_loss(z_density_h, gt_density_h) * width + l1_loss(z_density_w, gt_density_w) * height) / (height + width)
-        # ZL = l1_loss(z_density_h, gt_density_h)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) + ZL / (iteration // 5000 + 1)
+        #if gt_density_h is None or gt_density_w is None:
+        if not is_sonar:
+            Ll1 = l1_loss(image, gt_image)
+            #print("Warning: Depth is not available for this viewpoint")
+            #assert False
+            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        else:
+            if z_density_h is not None and z_density_w is not None:
+                ZL = (l1_loss(z_density_h, gt_density_h) * width + l1_loss(z_density_w, gt_density_w) * height) / (height + width)
+            elif z_density_h is not None and z_density_w is None:
+                ZL = l1_loss(z_density_h, gt_density_h)
+            elif z_density_h is None and z_density_w is not None:
+                ZL = l1_loss(z_density_w, gt_density_w)
+            # ZL = l1_loss(z_density_h, gt_density_h)
+            #loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) + ZL / (iteration // 5000 + 1)
+            loss = ZL
+            Z_total += ZL.item()
         loss.backward()
 
         iter_end.record()
-
+        if iteration % 1000 == 0:
+            print("ZL: ", Z_total / 1000)
+            Z_total = 0.0
         with torch.no_grad():
             # Progress bar
-            ema_loss_for_log_rgb = 0.4 * Ll1.item() + 0.6 * ema_loss_for_log_rgb
-            ema_loss_for_log_z = 0.4 * ZL.item() + 0.6 * ema_loss_for_log_z
+            if not is_sonar:
+                ema_loss_for_log_rgb = 0.4 * Ll1.item() + 0.6 * ema_loss_for_log_rgb
+            else:
+            #if gt_density_h is not None and gt_density_w is not None:
+                ema_loss_for_log_z = 0.4 * ZL.item() + 0.6 * ema_loss_for_log_z
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"RGB_Loss": f"{ema_loss_for_log_rgb:.{7}f}", "Z_Loss": f"{ema_loss_for_log_z:.{7}f}"})
+                if gt_density_h is not None: #and gt_density_w is not None:
+                    progress_bar.set_postfix({"RGB_Loss": f"{ema_loss_for_log_rgb:.{7}f}", "Z_Loss": f"{ema_loss_for_log_z:.{7}f}"})
+                else:
+                    progress_bar.set_postfix({"RGB_Loss": f"{ema_loss_for_log_rgb:.{7}f}"})
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
 
             # Log and save
+            if is_sonar:
+                Ll1 = torch.tensor(0.0)
+            else:
+                ZL = torch.tensor(0.0)
+
             training_report(tb_writer, iteration, Ll1, ZL, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
@@ -176,7 +224,7 @@ def training_report(tb_writer, iteration, Ll1, ZL, loss, l1_loss, elapsed, testi
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/z_loss', ZL.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
-
+    
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
@@ -238,6 +286,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     # network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
+
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
 
     # All done

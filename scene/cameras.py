@@ -17,7 +17,7 @@ from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
                  image_name, uid,
-                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", depth = None
+                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", depth = None, is_sonar=False
                  ):
         super(Camera, self).__init__()
 
@@ -28,6 +28,7 @@ class Camera(nn.Module):
         self.FoVx = FoVx
         self.FoVy = FoVy
         self.image_name = image_name
+        self.is_sonar=is_sonar
 
         try:
             self.data_device = torch.device(data_device)
@@ -37,13 +38,20 @@ class Camera(nn.Module):
             self.data_device = torch.device("cuda")
 
         self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
-        self.image_width = self.original_image.shape[2]
-        self.image_height = self.original_image.shape[1]
+        try:
+            self.image_width = self.original_image.shape[2]
+            self.image_height = self.original_image.shape[1]
+        except:
+            self.image_width = self.original_image.shape[1]
+            self.image_height = self.original_image.shape[0]
 
         if gt_alpha_mask is not None:
             self.original_image *= gt_alpha_mask.to(self.data_device)
         else:
-            self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+            try:
+                self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+            except:
+                pass     
         
         self.z_density_h = torch.from_numpy(depth[0]).to(self.data_device) if depth[0] is not None else None
         self.z_density_w = torch.from_numpy(depth[1]).to(self.data_device) if depth[1] is not None else None
