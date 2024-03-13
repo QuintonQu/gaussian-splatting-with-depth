@@ -45,7 +45,7 @@ class Camera(nn.Module):
         else:
             self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
         
-        self.depth = torch.from_numpy(depth).to(self.data_device) if depth is not None else None
+        self.z_density = torch.from_numpy(depth).to(self.data_device) if depth is not None else None
 
         self.zfar = 100.0
         self.znear = 0.01

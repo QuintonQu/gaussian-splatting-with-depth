@@ -391,7 +391,7 @@ def readToRFInfo(path, white_background, eval, extension=".npy", llffhold=8):
 
 
 # BLOCK: Read Mitsuba Scene
-def readMistubaCameras(path, white_background):
+def readMistubaCameras(path, h_res):
     cam_list = []
     # Color paths
     fovx_path = os.path.join(path, "camera/fov.npy")
@@ -417,6 +417,7 @@ def readMistubaCameras(path, white_background):
         # Read the color file
         color_file = np.load(os.path.join(color_folder_path, color_file_paths[idx]))
         color_file = color_file[:, :, :3] # For not alpha channel
+        image = Image.fromarray((color_file).astype(np.byte), "RGB")
         # Camera to world
         C2W = to_worlds[idx]
         # Mitsuba (x->left, y->up, z->forward), Colmap (x->right, y->down, z->forward)
@@ -427,7 +428,13 @@ def readMistubaCameras(path, white_background):
 
         # Read the depth
         depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
-        image = Image.fromarray((color_file).astype(np.byte), "RGB")
+        h_res_window = depth.shape[0] // h_res
+        bin_edges = np.linspace(0, 8, num=201)
+        hist_h = np.zeros((h_res, len(bin_edges)-1))
+        for i in range(h_res):
+            hist_h[i], _ = np.histogram(depth[i * h_res_window: (i + 1) * h_res_window], bins=bin_edges)
+        hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
+        hist_h = hist_h.T
 
         fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
         FovY = fovy 
@@ -435,13 +442,13 @@ def readMistubaCameras(path, white_background):
 
         # Create the camera
         cam_info = CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=os.path.join(color_folder_path, color_file_paths[idx]), image_name=str(color_file_paths[idx]), width=image.size[0], height=image.size[1], depth=depth)
+                              image_path=os.path.join(color_folder_path, color_file_paths[idx]), image_name=str(color_file_paths[idx]), width=image.size[0], height=image.size[1], depth=hist_h)
         cam_list.append(cam_info)
 
     return cam_list
 
-def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhold=4):
-    cam_infos = readMistubaCameras(path, white_background)
+def readMitsubaSceneInfo(path, eval, h_res=1):
+    cam_infos = readMistubaCameras(path, h_res)
     nerf_normalization = getNerfppNorm(cam_infos)
     # Reshape the cam_infos in to a 2D list (sqrt(len))^2
     if math.sqrt(len(cam_infos)) % 1 != 0:
@@ -457,7 +464,7 @@ def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhol
         test_cam_infos = []
         for i in range(size):
             for j in range(size):
-                if (i % llffhold == 0 or i==size-1) and (j % llffhold == 0 or j==size-1):
+                if (i % 4 == 0 or i==size-1) and (j % 4 == 0 or j==size-1):
                     train_cam_infos.append(cam_infos_2d[i][j])
                 else:
                     test_cam_infos.append(cam_infos_2d[i][j])
