@@ -37,7 +37,6 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         render_info = render(view, gaussians, pipeline, background)
         rendering = render_info["render"]
         z_density = render_info["z_density"]
-        # print("Z density: {}".format(z_density))
         gt = view.original_image[0:3, :, :]
         original_id = view.image_name.split(".")[0]
         torchvision.utils.save_image(rendering, os.path.join(render_path, original_id + ".png"))
@@ -47,7 +46,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         render_numpy = rendering.cpu().numpy()
         render_numpy = np.clip(np.round(render_numpy * 255), 0, 255).astype(np.uint8) 
         render_numpy = np.transpose(render_numpy, (1, 2, 0))
-        # np.save(os.path.join(color_npy_path, original_id + ".npy"), render_numpy)
+        np.save(os.path.join(color_npy_path, original_id + ".npy"), render_numpy)
 
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):

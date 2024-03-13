@@ -436,6 +436,11 @@ def readMistubaCameras(path, h_res):
         hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
         hist_h = hist_h.T
 
+        # WARNING  WARNING  WARNING ONLY FOR TEST
+        hist_h = np.sum(depth, axis=1, keepdims=True)
+        hist_h = hist_h / hist_h.max()
+        # WARNING  WARNING  WARNING ONLY FOR TEST
+
         fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
         FovY = fovy 
         FovX = fovx
