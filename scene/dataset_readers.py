@@ -28,6 +28,7 @@ import math
 import re
 import cv2
 import json
+from tqdm import tqdm
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -40,7 +41,7 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
-    depth: np.array = None
+    depth: list = None
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -471,7 +472,7 @@ def readMistubaCameras(path, white_background):
     num_color_files = len(color_file_paths)
     
     # For each color file, we create a camera
-    for idx in range(num_color_files):
+    for idx in tqdm(range(num_color_files), desc="Reading cameras"):
         # Read the color file
         color_file = np.load(os.path.join(color_folder_path, color_file_paths[idx]))
         image = Image.fromarray((color_file).astype(np.byte), "RGB")
@@ -483,12 +484,21 @@ def readMistubaCameras(path, white_background):
         R = np.transpose(W2C[:3, :3])
         T = W2C[:3, 3]
 
-
         # Read the depth (Statistically)
-        depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))        
-        bin_edges = np.linspace(0, 8, 201)
-        hist, _ = np.histogram(depth.flatten(), bins=bin_edges)
-        depth = hist / np.max(hist) 
+        h_res_scale = 5;
+        w_res_scale = 5;
+        depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
+        bin_edges = np.linspace(0, 8, num=201)
+        hist_h = np.zeros((depth.shape[0] // h_res_scale, len(bin_edges)-1))
+        for i in range(depth.shape[0] // h_res_scale):
+            hist_h[i], _ = np.histogram(depth[i * h_res_scale: (i + 1) * h_res_scale], bins=bin_edges)
+        hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
+        hist_h = hist_h.T
+        hist_w = np.zeros((depth.shape[1] // w_res_scale, len(bin_edges)-1))
+        for i in range(depth.shape[1] // w_res_scale):
+            hist_w[i], _ = np.histogram(depth[:, i * w_res_scale : (i + 1) * w_res_scale], bins=bin_edges)
+        hist_w = hist_w / hist_w.max(axis=1, keepdims=True)
+        hist_w = hist_w.T
 
         # WARNING Only for test
         # depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
@@ -500,7 +510,7 @@ def readMistubaCameras(path, white_background):
 
         # Create the camera
         cam_info = CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=os.path.join(color_folder_path, color_file_paths[idx]), image_name=str(color_file_paths[idx]), width=image.size[0], height=image.size[1], depth=depth)
+                              image_path=os.path.join(color_folder_path, color_file_paths[idx]), image_name=str(color_file_paths[idx]), width=image.size[0], height=image.size[1], depth=[hist_h, hist_w])
         cam_list.append(cam_info)
 
     return cam_list
@@ -519,7 +529,7 @@ def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhol
         test_cam_infos = []
         for i in range(size):
             for j in range(size):
-                if (i % 4 == 0 or i==size-1) and (j % 4 == 0 or j==size-1):
+                if ((i) % 4 == 0) and ((j) % 4 == 0):
                     train_cam_infos.append(cam_infos_2d[i][j])
                 else:
                     test_cam_infos.append(cam_infos_2d[i][j])
@@ -558,111 +568,9 @@ def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhol
     return scene_info
 
 
-# def readSonarCameras(path):
-#     cam_list = []
-#     # Color paths
-#     color_extrinsics_path = os.path.join(path, "cams/camera_extrinsics.json")
-#     color_intrinsics_path = os.path.join(path, "cams/camera_intrinsics.npy")
-#     color_folder_path = os.path.join(path, "images")
-#     # sonar waveform data
-#     sonar_wf_data = os.path.join(path, "Sonar_raw")
-    
-#     # Read the extrinsics and intrinsics
-#     extrinsics = json.load(open(color_extrinsics_path))
-#     intrinsics = np.load(color_intrinsics_path)
-#     intrinsics_inv = np.linalg.inv(intrinsics)
-    
-#     # Find how many color .npy file in the color folder
-#     color_file_paths = os.listdir(color_folder_path)
-    
-#     # For each color file, we create a camera
-#     for idx, file in enumerate(color_file_paths):
-        
-#         angle = file.split('.')[0]
-#         color_file = cv2.imread(os.path.join(color_folder_path, file))
-#         image = Image.fromarray((cv2.cvtColor(color_file, cv2.COLOR_BGR2RGB)).astype(np.byte), "RGB")
-#         height = color_file.shape[0]
-#         width = color_file.shape[1]
-#         # Read the extrinsics and intrinsics
-#         extrinsic = np.array(extrinsics[angle]).reshape(4, 4)
-#         fov_x, fov_y = _calculateFovs(height, width, intrinsics_inv)
-        
-#         # handle the 0 degree case
-#         if angle == '0':
-#             angle = '360'
-
-#         sonar_file = f'Flight-{angle.zfill(6)}.csv'
-#         sonar_wf_file = os.path.join(sonar_wf_data, sonar_file)
-
-#         wf = np.loadtxt(sonar_wf_file, delimiter=',')
-
-#         transmit_wave = LFM(f_start=0, f_stop=30e3, Fs=100000, T=0.001, V_peak=1, alpha=0.1)
-#         hilbert = signal.hilbert(wf)
-#         hilbert_fft = np.fft.fft(hilbert)
-#         trans_fft = np.fft.fft(transmit_wave,1000)
-#         analytic = np.fft.ifft(hilbert_fft*np.conj(trans_fft))
-#         print(f"Analytic min: {np.min(analytic)}, max: {np.max(analytic)}")
-
-#         bin_edges = np.linspace(0, 8, num=201)
-#         hist, _ = np.histogram(analytic, bins=bin_edges)
-#         wf = hist / np.max(hist)
-
-#         # depth = np.load(os.path.join(sonar_wf_data, color_file_paths[idx])).flatten()
-#         # bin_edges = np.linspace(0, 8, num=201)
-#         # hist, _ = np.histogram(depth, bins=bin_edges)
-#         # # Min-max hist to 0-1
-#         # depth = hist / np.max(hist)
-#         # Create the camera
-#         cam_info = CameraInfo(uid=idx, R=extrinsic[:3, :3], T=extrinsic[:3, 3], FovY=fov_y, FovX=fov_x, image=image,
-#                               image_path=os.path.join(color_folder_path, file), image_name=str(file), width=width, height=height, depth=wf)
-#         cam_list.append(cam_info)
-
-#     return cam_list
-
-# def readSonarSceneInfo(path, eval, llffhold=2):
-#     cam_infos = readSonarCameras(path)
-#     nerf_normalization = getNerfppNorm(cam_infos)
-
-#     if eval:
-#         train_cam_infos = cam_infos[:llffhold**2]
-#         test_cam_infos = cam_infos[llffhold**2:]
-#     else:
-#         train_cam_infos = cam_infos
-#         test_cam_infos = []
-    
-#     print("Train set size: ", len(train_cam_infos))
-#     print("Test set size: ", len(test_cam_infos))
-
-#     # Of course we do not have point cloud for point3d
-#     ply_path = os.path.join(path, "points3d.ply")
-#     if not os.path.exists(ply_path):
-#         # Since this data set has no colmap data, we start with random points
-#         num_pts = 100_000
-#         print(f"Generating random point cloud ({num_pts})...")
-        
-#         # We create random points inside the bounds of the scenes
-#         xyz = np.random.random((num_pts, 3)) * 8.0 - 4.0
-#         shs = np.random.random((num_pts, 3)) / 255.0
-#         pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
-
-#         storePly(ply_path, xyz, SH2RGB(shs) * 255)
-#     try:
-#         pcd = fetchPly(ply_path)
-#     except:
-#         pcd = None
-
-#     scene_info = SceneInfo(point_cloud=pcd,
-#                            train_cameras=train_cam_infos,
-#                            test_cameras=test_cam_infos,
-#                            nerf_normalization=nerf_normalization,
-#                            ply_path=ply_path)
-#     return scene_info
-
-
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
     "Blender" : readNerfSyntheticInfo,
     "ToRF" : readToRFInfo,
     "Mitsuba" : readMitsubaSceneInfo,
-    # "Sonar" : readSonarSceneInfo
 }
