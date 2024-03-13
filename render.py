@@ -47,7 +47,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         render_numpy = rendering.cpu().numpy()
         render_numpy = np.clip(np.round(render_numpy * 255), 0, 255).astype(np.uint8) 
         render_numpy = np.transpose(render_numpy, (1, 2, 0))
-        np.save(os.path.join(color_npy_path, original_id + ".npy"), render_numpy)
+        # np.save(os.path.join(color_npy_path, original_id + ".npy"), render_numpy)
 
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):

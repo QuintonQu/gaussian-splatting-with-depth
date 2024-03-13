@@ -91,15 +91,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Loss
         gt_image = viewpoint_cam.original_image
         gt_depth = viewpoint_cam.depth if viewpoint_cam.depth is not None else None
+        # Do not backpropagate where the depth is 0
+        if gt_depth is not None:
+            gt_depth_new = torch.where(gt_depth <= 0.0, z_density, gt_depth)
         # Print something if the depth is not available
         if gt_depth is None:
             print("Warning: Depth is not available for this viewpoint")
             assert False
         Ll1 = l1_loss(image, gt_image)
-        ZL = l1_loss(z_density, gt_depth) if gt_depth is not None else 0.0
+        ZL = l1_loss(z_density, gt_depth_new) if gt_depth is not None else 0.0
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        if opt.depth_loss and gt_depth is not None:
-            loss += ZL * 3
+        if opt.depth_loss:
+            loss += ZL
         loss.backward()
 
         iter_end.record()
