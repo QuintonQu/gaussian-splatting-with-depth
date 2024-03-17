@@ -433,7 +433,12 @@ def readMistubaCameras(path, h_res):
         hist_h = np.zeros((h_res, len(bin_edges)-1))
         for i in range(h_res):
             hist_h[i], _ = np.histogram(depth[i * h_res_window: (i + 1) * h_res_window], bins=bin_edges)
-        hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
+        try:
+            hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
+        except ZeroDivisionError:
+            print("Error: Division by zero")
+            print(f"Depth min: {np.min(depth)}, max: {np.max(depth)}")
+            sys.exit(1)
         hist_h = hist_h.T
 
         # WARNING  WARNING  WARNING ONLY FOR TEST

@@ -18,6 +18,8 @@ from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 
+random.seed(0)
+
 class Scene:
 
     gaussians : GaussianModel
