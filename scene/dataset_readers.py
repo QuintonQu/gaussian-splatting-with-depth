@@ -337,13 +337,12 @@ def getPose(p, s):
 def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"):
     cam_infos = []
     add_sonar = True
-    add_camera = True
+    add_camera = False
     data_dir = "./data/underwater"
     # PROCESS THE SONAR IMAGES       
     basedir = os.path.join(data_dir, 'real_14deg.mat')
     
     data = io.loadmat(basedir)
-    print(data["images"].shape)
     images_raw = data["images"].squeeze()
     sensor_rels = data["sensor_rels"].squeeze()
     platform_poses = data["platform_poses"].squeeze()
@@ -364,29 +363,33 @@ def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"
         im[0:bound_substract_top, :] = 0
         im[max_row-bound_substract_bottom:max_row, :] = 0
         im[im < min_int] = 0
-        print(np.nonzero(im))
         num_true = len(im[im > 0])
         if num_true < 20:
            skip_index.append(i)
            continue
-        bin_edges = np.linspace(0.75, 3, num=201)
-        #hist_h = np.zeros((depth.shape[0] , len(bin_edges)-1))
-        # create a histogram for each column 
-        hist_h_acc = []
-        for j in range(im.shape[1]):
-            hist_h, _ = np.histogram(im[:,j], bins=bin_edges)
-            if hist_h.max() > 0:
-                hist_h = hist_h / hist_h.max()
-            hist_h_acc.append(hist_h)
+        # bin_edges = np.linspace(0.75, 3, num=513)
+        # #hist_h = np.zeros((depth.shape[0] , len(bin_edges)-1))
+        # # create a histogram for each column 
+        # hist_h_acc = []
+        # for j in range(im.shape[1]):
+        #     hist_h, _ = np.histogram(im[:,j], bins=bin_edges)
+        #     if hist_h.max() > 0:
+        #         hist_h = hist_h / hist_h.max()
+        #     hist_h_acc.append(hist_h)
 
-        # each row is a depth histogram 
-        hist_h_acc = np.array(hist_h_acc).T
-        # count non zero values
+        # # each row is a depth histogram 
+        # hist_h_acc = np.array(hist_h_acc).T
+        # # count non zero values
         
         #print(hist_h_acc)
-        histograms.append([hist_h_acc, None])
-        images.append(im)
-
+        # normalize columns of im 
+        #images.append(im)
+        for j in range(im.shape[1]):
+            if im[:,j].max() > 0:
+                im[:,j] = im[:,j] / im[:,j].max()
+        
+        histograms.append([None, im])
+        
     sensor_poses = []
     for i in range(len(sensor_rels)):
         if i in skip_index: continue
@@ -401,12 +404,15 @@ def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"
         image_path = None #os.path.join(path, "image/{}.png".format(str(i).zfill(4)))
         #image_name = str(i).zfill(4)
         image_name = None
-        image = images[i]
+        #image = images[i]   
+        image = np.zeros((44, 96, 3))
+        # covert numpy to image 
+        image = Image.fromarray(np.array(image*255.0, dtype=np.byte), "RGB")
         #im_data = np.array(image.convert("RGBA"))
         depth = histograms[i]
         if add_sonar:
-            cam_infos.append(CameraInfo(uid=i, R=R, T=T, FovY=hfov, FovX=vfov, image=image.T,
-                            image_path=image_path, image_name=image_name, width=512, height=96, depth=depth,
+            cam_infos.append(CameraInfo(uid=i, R=R, T=T, FovY=hfov, FovX=vfov, image=image,
+                            image_path=image_path, image_name=image_name, width=96, height=44, depth=depth,
                             is_sonar=True))
 
     if not add_camera:

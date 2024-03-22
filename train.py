@@ -98,6 +98,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"] 
 
+        # print("image shape: ", image.shape)
+        # print(torch.count_nonzero(image, dim=None))
+        # print(render_pkg["z_density_h"].shape)
+        # print(render_pkg["z_density_w"].shape)
+        # print(gt_density_w.shape)
+        # count the non-zero elements in the rendered density
+        # print(torch.count_nonzero(render_pkg["z_density_h"], dim=None))
+        # print(torch.count_nonzero(render_pkg["z_density_w"], dim=None))
         
         h_res_window = height // dataset.h_res
         w_res_window = width // dataset.w_res
@@ -118,15 +126,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             assert z_density_h.shape[1] == dataset.h_res
             assert z_density_w.shape[1] == dataset.w_res
 
-        # Q: why is the output of z_density_w the one matching the GT density?
-        ZL = torch.zeros(1, dtype=torch.float32, device="cuda")
-
         if is_sonar:
-            ZL = l1_loss(z_density_h, gt_density_h) 
+            ZL = l1_loss(z_density_w, gt_density_w) 
             # count the non-zero elements in the ground truth density
-            print(torch.count_nonzero(z_density_h, dim=None))
-            print(torch.count_nonzero(gt_density_h, dim=None)) 
-            loss = 0.1 * ZL / (1.5 ** (iteration // opt.opacity_reset_interval + 1))
+            print("z_density_w ", torch.count_nonzero(z_density_w, dim=None))
+            print("g_denSity_w ", torch.count_nonzero(gt_density_w, dim=None)) 
+            loss = ZL / (1.5 ** (iteration // opt.opacity_reset_interval + 1))
             Z_total += ZL.item()
         else:
             Ll1 = l1_loss(image, gt_image)
