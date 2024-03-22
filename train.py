@@ -49,6 +49,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log_z = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    Z_total = 0.0
+    l1_loss_total = 0.0
     for iteration in range(first_iter, opt.iterations + 1):        
         # if network_gui.conn == None:
         #     network_gui.try_connect()
@@ -76,8 +78,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
+        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        is_sonar = viewpoint_cam.is_sonar
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -88,46 +91,82 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gt_image = viewpoint_cam.original_image
         gt_density_h = viewpoint_cam.z_density_h if viewpoint_cam.z_density_h is not None else None
         gt_density_w = viewpoint_cam.z_density_w if viewpoint_cam.z_density_w is not None else None
+        
         height = gt_image.shape[1]
         width = gt_image.shape[2]
-
+        
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"] 
 
+        
         h_res_window = height // dataset.h_res
         w_res_window = width // dataset.w_res
-        
-        z_density_h = render_pkg["z_density_h"].unfold(1, h_res_window, h_res_window).sum(dim=2)
-        z_density_w = render_pkg["z_density_w"].unfold(1, w_res_window, w_res_window).sum(dim=2)
+
+        if not is_sonar:
+            z_density_h = render_pkg["z_density_h"].unfold(1, h_res_window, h_res_window).sum(dim=2)
+            z_density_w = render_pkg["z_density_w"].unfold(1, w_res_window, w_res_window).sum(dim=2)
+        else: 
+            z_density_h = render_pkg["z_density_h"]
+            z_density_w = render_pkg["z_density_w"]
+
         # Min-max depth normalization
         z_density_h = z_density_h / (z_density_h.max(dim=0, keepdim=True)[0] + 1e-10)
         z_density_w = z_density_w / (z_density_w.max(dim=0, keepdim=True)[0] + 1e-10)
-        assert z_density_h.shape[1] == dataset.h_res
-        assert z_density_w.shape[1] == dataset.w_res
 
-        Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) 
+        if not is_sonar:
+            # Q: is this necessary for sonar?
+            assert z_density_h.shape[1] == dataset.h_res
+            assert z_density_w.shape[1] == dataset.w_res
+
+        # Q: why is the output of z_density_w the one matching the GT density?
         ZL = torch.zeros(1, dtype=torch.float32, device="cuda")
-        if gt_density_h is not None and gt_density_w is not None:
-            ZL = (l1_loss(z_density_h, gt_density_h) * dataset.w_res + l1_loss(z_density_w, gt_density_w) * dataset.h_res) / (dataset.h_res + dataset.w_res)
-            if opt.depth_loss:
-                loss += 0.1 * ZL / (1.5 ** (iteration // opt.opacity_reset_interval + 1))
-        loss.backward()
 
+        if is_sonar:
+            ZL = l1_loss(z_density_h, gt_density_h) 
+            # count the non-zero elements in the ground truth density
+            print(torch.count_nonzero(z_density_h, dim=None))
+            print(torch.count_nonzero(gt_density_h, dim=None)) 
+            loss = 0.1 * ZL / (1.5 ** (iteration // opt.opacity_reset_interval + 1))
+            Z_total += ZL.item()
+        else:
+            Ll1 = l1_loss(image, gt_image)
+            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) 
+            # if gt_density_h is not None and gt_density_w is not None:
+            #     ZL = (l1_loss(z_density_h, gt_density_h) * dataset.w_res + l1_loss(z_density_w, gt_density_w) * dataset.h_res) / (dataset.h_res + dataset.w_res)
+            #     if opt.depth_loss:
+            #         loss += 0.1 * ZL / (1.5 ** (iteration // opt.opacity_reset_interval + 1))
+            l1_loss_total += Ll1.item()
+
+        loss.backward()
         iter_end.record()
+
+        if iteration % 1000 == 0:
+            print("ZL: ", Z_total / 1000)
+            Z_total = 0.0
+            print("L1: ", l1_loss_total / 1000)
+            l1_loss_total = 0.0
 
         with torch.no_grad():
             # Progress bar
-            ema_loss_for_log_rgb = 0.4 * Ll1.item() + 0.6 * ema_loss_for_log_rgb
-            ema_loss_for_log_z = 0.4 * ZL.item() + 0.6 * ema_loss_for_log_z
-            if iteration % 10 == 0:
-                progress_bar.set_postfix({"RGB_Loss": f"{ema_loss_for_log_rgb:.{7}f}", "Z_Loss": f"{ema_loss_for_log_z:.{7}f}"})
-                progress_bar.update(10)
-            if iteration == opt.iterations:
-                progress_bar.close()
-
+            if not is_sonar:
+                #ema_loss_for_log_rgb = 0.4 * Ll1.item() + 0.6 * ema_loss_for_log_rgb
+                #ema_loss_for_log_z = 0.4 * ZL.item() + 0.6 * ema_loss_for_log_z
+                if iteration % 10 == 0:
+                    progress_bar.set_postfix({"L1": f"{Ll1.item():.{7}f}", "SSIM": f"{ssim(image, gt_image).item():.{7}f}"})
+                    progress_bar.update(10)
+                if iteration == opt.iterations:
+                    progress_bar.close()
+                #training_report(tb_writer, iteration, Ll1, ZL, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            else: 
+                if iteration % 10 == 0:
+                    progress_bar.set_postfix({"Z_Loss": f"{ZL.item():.{7}f}"})
+                    progress_bar.update(10)
+                if iteration == opt.iterations:
+                    progress_bar.close()
+                #Ll1 = torch.tensor(0.0)
+                #training_report(tb_writer, iteration, Ll1, ZL, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             # Log and save
-            training_report(tb_writer, iteration, Ll1, ZL, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)

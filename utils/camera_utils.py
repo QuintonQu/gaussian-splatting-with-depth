@@ -9,7 +9,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-from scene.cameras import Camera
+from scene.cameras import Camera, Sonar
 import numpy as np
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
@@ -51,12 +51,23 @@ def loadCam(args, id, cam_info, resolution_scale):
                   image=gt_image, gt_alpha_mask=loaded_mask,
                   image_name=cam_info.image_name, uid=id, data_device=args.data_device, depth=cam_info.depth)
 
+def loadSon(args, id, cam_info):
+    resized_image_rgb = cam_info.image
+    gt_image = resized_image_rgb
+    loaded_mask = None
+    return Sonar(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
+                  FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
+                  image=gt_image, gt_alpha_mask=loaded_mask,
+                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, depth=cam_info.depth)
+
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []
-
     for id, c in enumerate(cam_infos):
-        camera_list.append(loadCam(args, id, c, resolution_scale))
-
+        if not c.is_sonar:  
+            camera_list.append(loadCam(args, id, c, resolution_scale))
+        else: 
+            # doing nothing for now
+            camera_list.append(loadSon(args, id , c))
     return camera_list
 
 def camera_to_JSON(id, camera : Camera):

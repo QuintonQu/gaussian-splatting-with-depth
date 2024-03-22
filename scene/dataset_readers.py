@@ -29,6 +29,11 @@ import re
 import cv2
 import json
 from tqdm import tqdm
+import scipy
+from glob import glob
+from scipy import io
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -41,7 +46,8 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
-    depth: list = [None, None]
+    depth: list = None
+    is_sonar: bool = False
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -49,6 +55,45 @@ class SceneInfo(NamedTuple):
     test_cameras: list
     nerf_normalization: dict
     ply_path: str
+
+
+
+def plot_camera_poses(poses):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    for pose in poses:
+        ax.scatter(pose[0, 3], pose[1, 3], pose[2, 3], c='r', marker='o')
+
+    ax.set_xlabel('X Label')
+    ax.set_ylabel('Y Label')
+    ax.set_zlabel('Z Label')
+
+    plt.savefig("camera_poses.png")
+
+
+def load_K_Rt_from_P(filename, P=None):
+    if P is None:
+        lines = open(filename).read().splitlines()
+        if len(lines) == 4:
+            lines = lines[1:]
+        lines = [[x[0], x[1], x[2], x[3]] for x in (x.split(" ") for x in lines)]
+        P = np.asarray(lines).astype(np.float32).squeeze()
+
+    out = cv2.decomposeProjectionMatrix(P)
+    K = out[0]
+    R = out[1]
+    t = out[2]
+
+    K = K / K[2, 2]
+    intrinsics = np.eye(4)
+    intrinsics[:3, :3] = K
+
+    pose = np.eye(4, dtype=np.float32)
+    pose[:3, :3] = R.transpose()
+    pose[:3, 3] = (t[:3] / t[3])[:, 0]
+
+    return intrinsics, pose
 
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
@@ -82,7 +127,7 @@ def LFM(f_start=0, f_stop=30e3, Fs=100000, T=0.001, V_peak=1, alpha=0.1):
     return V_peak * np.sin(phase) * turky_window
 
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_folder=None, depth_folder=None, h_res=1, w_res=1):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_folder=None):
     cam_infos = []
 
     # #TODO: change this for the next time
@@ -125,41 +170,39 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_
         # if int(image_name) in list_to_pop:
         #     continue
 
-        # if sonar_wave_folder is not None:
-        #     # handle the 0 degree case
-        #     angle = image_name
-        #     if angle == '0':
-        #         angle = '360'
+        if sonar_wave_folder is not None:
+            # handle the 0 degree case
+            angle = image_name
+            if angle == '0':
+                angle = '360'
 
-        #     sonar_file = f'Flight-{angle.zfill(6)}.npy'
-        #     sonar_wf_file = os.path.join(sonar_wave_folder, sonar_file)
+            sonar_file = f'Flight-{angle.zfill(6)}.npy'
+            sonar_wf_file = os.path.join(sonar_wave_folder, sonar_file)
 
-        #     depth = np.load(sonar_wf_file)
+            depth = np.load(sonar_wf_file)
+
+            # wf = np.loadtxt(sonar_wf_file, delimiter=',')
+
+            # transmit_wave = LFM(f_start=0, f_stop=30e3, Fs=100000, T=0.001, V_peak=1, alpha=0.1)
+            # hilbert = signal.hilbert(wf)
+            # hilbert_fft = np.fft.fft(hilbert)
+            # trans_fft = np.fft.fft(transmit_wave,1000)
+            # analytic = np.abs(np.fft.ifft(hilbert_fft*np.conj(trans_fft)))
+
+
+            # bin_edges = np.linspace(0, 8, num=201)
+            # hist, _ = np.histogram(analytic, bins=bin_edges)
+            # wf = hist / np.max(hist)
+
 
         image = Image.open(image_path)
-
-        if depth_folder is not None:
-            depth = np.load(os.path.join(depth_folder, image_name + ".npy"))
-            h_res_window = depth.shape[0] // h_res
-            w_res_window = depth.shape[1] // w_res
-            bin_edges = np.linspace(0, 8, num=201)
-            hist_h = np.zeros((h_res, len(bin_edges)-1))
-            for i in range(h_res):
-                hist_h[i], _ = np.histogram(depth[i * h_res_window: (i + 1) * h_res_window], bins=bin_edges)
-            hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
-            hist_h = hist_h.T
-            hist_w = np.zeros((w_res, len(bin_edges)-1))
-            for i in range(w_res):
-                hist_w[i], _ = np.histogram(depth[:, i * w_res_window : (i + 1) * w_res_window], bins=bin_edges)
-            hist_w = hist_w / hist_w.max(axis=1, keepdims=True)
-            hist_w = hist_w.T
 
         # cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
         #                       image_path=image_path, image_name=image_name, width=width, height=height,
         #                       wf=wf if sonar_wave_folder is not None else None)
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height,
-                                depth=[hist_h, hist_w] if depth_folder is not None else None)
+                                depth=depth if sonar_wave_folder is not None else None)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -171,6 +214,15 @@ def fetchPly(path):
     colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
     normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
+
+
+def fetchPlySonar(path):
+    plydata = PlyData.read(path)
+    vertices = plydata['vertex']
+    positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
+    normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    return BasicPointCloud(points=positions, colors=None, normals=normals)    
+
 
 def storePly(path, xyz, rgb):
     # Define the dtype for the structured array
@@ -190,7 +242,7 @@ def storePly(path, xyz, rgb):
     ply_data.write(path)
 
 
-def readColmapSceneInfo(path, images, eval, llffhold=4, h_res=1, w_res=1):
+def readColmapSceneInfo(path, images, eval, llffhold=4):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -202,18 +254,18 @@ def readColmapSceneInfo(path, images, eval, llffhold=4, h_res=1, w_res=1):
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
-    reading_dir = "color" if images == None else images
-    if os.path.exists(os.path.join(path, "depth")):
+    reading_dir = "images" if images == None else images
+    if os.path.exists(os.path.join(path, "Sonar_raw")):
         cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, 
-                                            images_folder=os.path.join(path, reading_dir), depth_folder=os.path.join(path, "depth"), h_res=h_res, w_res=w_res)
+                                            images_folder=os.path.join(path, reading_dir), sonar_wave_folder=os.path.join(path, "Sonar_raw"))
     else:
         cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, 
                                             images_folder=os.path.join(path, reading_dir))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx < 3*13]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx >= 3*13]
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
@@ -242,6 +294,184 @@ def readColmapSceneInfo(path, images, eval, llffhold=4, h_res=1, w_res=1):
                            ply_path=ply_path)
     return scene_info
 
+def getPose(p, s):
+    from scipy.spatial.transform import Rotation 
+
+    Rpm = Rotation.from_quat(np.array([p[3], p[1], p[2], p[0]]).squeeze())
+    Rpm = np.array(Rpm.as_matrix())
+    Rp = np.array([[Rpm[1, 1], Rpm[1, 2], Rpm[1, 0]],
+                  [Rpm[2, 1], Rpm[2, 2], Rpm[2, 0]],
+                  [Rpm[0, 1], Rpm[0, 2], Rpm[0, 0]]])    
+    Tp = np.array([p[4], p[5], p[6]])
+
+
+    Rsm = Rotation.from_quat(np.array([s[3], s[1], s[2], s[0]]).squeeze())
+    Rsm = np.array(Rsm.as_matrix())
+    Rs = np.array([[Rsm[1, 1], Rsm[1, 2], Rsm[1, 0]],
+                  [Rsm[2, 1], Rsm[2, 2], Rsm[2, 0]],
+                  [Rsm[0, 1], Rsm[0, 2], Rsm[0, 0]]])    
+    Ts = np.array([s[4], s[5], s[6]])
+
+    try:
+        Pp = np.array([[Rp[0, 0], Rp[0, 1], Rp[0, 2], Tp[0][0]], 
+                    [Rp[1, 0], Rp[1, 1], Rp[1, 2], Tp[1][0]],
+                    [Rp[2, 0], Rp[2, 1], Rp[2, 2], Tp[2][0]],
+                    [0, 0, 0, 1]])
+
+        Ps = np.array([[Rs[0, 0], Rs[0, 1], Rs[0, 2], Ts[0][0]], 
+                    [Rs[1, 0], Rs[1, 1], Rs[1, 2], Ts[1][0]],
+                    [Rs[2, 0], Rs[2, 1], Rs[2, 2], Ts[2][0]],
+                    [0, 0, 0, 1]])  
+    except:
+        Pp = np.array([[Rp[0, 0], Rp[0, 1], Rp[0, 2], Tp[0]], 
+                    [Rp[1, 0], Rp[1, 1], Rp[1, 2], Tp[1]],
+                    [Rp[2, 0], Rp[2, 1], Rp[2, 2], Tp[2]],
+                    [0, 0, 0, 1]])
+
+        Ps = np.array([[Rs[0, 0], Rs[0, 1], Rs[0, 2], Ts[0]], 
+                    [Rs[1, 0], Rs[1, 1], Rs[1, 2], Ts[1]],
+                    [Rs[2, 0], Rs[2, 1], Rs[2, 2], Ts[2]],
+                    [0, 0, 0, 1]])          
+    return Pp@Ps
+
+def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"):
+    cam_infos = []
+    add_sonar = True
+    add_camera = True
+    data_dir = "./data/underwater"
+    # PROCESS THE SONAR IMAGES       
+    basedir = os.path.join(data_dir, 'real_14deg.mat')
+    
+    data = io.loadmat(basedir)
+    print(data["images"].shape)
+    images_raw = data["images"].squeeze()
+    sensor_rels = data["sensor_rels"].squeeze()
+    platform_poses = data["platform_poses"].squeeze()
+
+
+    bound_substract_bottom = 100
+    bound_substract_top = 100
+    skip_index = []
+    max_row = 512
+    min_int = 0.2
+    images = []
+    histograms = []
+    hfov = data['hfov']
+    vfov = data['vfov']
+    for i, image_raw in enumerate(images_raw):
+        if i in skip_index: continue
+        im = image_raw
+        im[0:bound_substract_top, :] = 0
+        im[max_row-bound_substract_bottom:max_row, :] = 0
+        im[im < min_int] = 0
+        print(np.nonzero(im))
+        num_true = len(im[im > 0])
+        if num_true < 20:
+           skip_index.append(i)
+           continue
+        bin_edges = np.linspace(0.75, 3, num=201)
+        #hist_h = np.zeros((depth.shape[0] , len(bin_edges)-1))
+        # create a histogram for each column 
+        hist_h_acc = []
+        for j in range(im.shape[1]):
+            hist_h, _ = np.histogram(im[:,j], bins=bin_edges)
+            if hist_h.max() > 0:
+                hist_h = hist_h / hist_h.max()
+            hist_h_acc.append(hist_h)
+
+        # each row is a depth histogram 
+        hist_h_acc = np.array(hist_h_acc).T
+        # count non zero values
+        
+        #print(hist_h_acc)
+        histograms.append([hist_h_acc, None])
+        images.append(im)
+
+    sensor_poses = []
+    for i in range(len(sensor_rels)):
+        if i in skip_index: continue
+        P = getPose(platform_poses[i], sensor_rels[i])
+        w2c = np.linalg.inv(P)
+        R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
+        T = w2c[:3, 3]
+        sensor_poses.append((R, T))
+    
+    for i in range(len(sensor_poses)):
+        R, T = sensor_poses[i]
+        image_path = None #os.path.join(path, "image/{}.png".format(str(i).zfill(4)))
+        #image_name = str(i).zfill(4)
+        image_name = None
+        image = images[i]
+        #im_data = np.array(image.convert("RGBA"))
+        depth = histograms[i]
+        if add_sonar:
+            cam_infos.append(CameraInfo(uid=i, R=R, T=T, FovY=hfov, FovX=vfov, image=image.T,
+                            image_path=image_path, image_name=image_name, width=512, height=96, depth=depth,
+                            is_sonar=True))
+
+    if not add_camera:
+        return cam_infos
+    # PROCESS THE CAMERA IMAGES
+    FocalLength= [776.3492, 775.8459]
+    FocalLengthm = [0.0107, 0.0107]
+    ImageSize = [512, 612]
+    
+    K= np.array([[776.3492, 0, 305.3432],
+                [0, 775.8459, 249.1058],
+                [0, 0, 1.0000]])
+
+    FovX = 2*math.atan(ImageSize[0]/(2*FocalLength[1]))
+    FovY = 2*math.atan(ImageSize[1]/(2*FocalLength[0]))
+
+    images_lis = sorted(glob(os.path.join(data_dir, 'image/*.png')))
+    render_cameras_name = "cameras_sphere.npz"
+    camera_dict = np.load(os.path.join(data_dir, render_cameras_name))
+    n_images = len(images_lis)
+    world_mats_np = [camera_dict['world_mat_%d' % idx].astype(np.float32) for idx in range(n_images)]
+    scale_mats_np = [camera_dict['scale_mat_%d' % idx].astype(np.float32) for idx in range(n_images)]
+    
+    # 14 degree adjustement transform
+    T_adjust = np.array([
+            [-0.98, 0.06, 0.21, -0.03],
+            [0.06, -0.85, 0.52, -0.04],
+            [0.21, 0.52, 0.83, -0.055],
+            [0, 0, 0, 1]
+        ]).T
+
+    for idx, image_path in enumerate(images_lis):
+        index = str(idx).zfill(4)
+        cam_name = 'image/{}.png'.format(index)
+        world_mat = world_mats_np[idx]
+        scale_mat = scale_mats_np[idx]
+        P = world_mat @ scale_mat @ T_adjust
+        P = P[:3, :4]
+        _, c2w = load_K_Rt_from_P(None, P)
+        # NeRF 'transform_matrix' is a camera-to-world transform
+        # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
+        #c2w[:3, 1:3] *= -1
+
+        # get the world-to-camera transform and set R, T
+        w2c = np.linalg.inv(c2w)
+        R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
+        T = w2c[:3, 3]
+
+        image_path = os.path.join(path, cam_name)
+        image_name = Path(cam_name).stem
+        image = Image.open(image_path)
+
+        im_data = np.array(image.convert("RGBA"))
+
+        bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
+
+        norm_data = im_data / 255.0
+        arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
+        image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+        depth = [None, None]
+        cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+                        image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], depth=depth,
+                        is_sonar=False))
+
+    return cam_infos
 
 def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png"):
     cam_infos = []
@@ -249,7 +479,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
         fovx = contents["camera_angle_x"]
-
+    
         frames = contents["frames"]
         for idx, frame in enumerate(frames):
             cam_name = os.path.join(path, frame["file_path"] + extension)
@@ -280,16 +510,16 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             FovY = fovy 
             FovX = fovx
 
-            depth_im = cv2.imread(os.path.join(path, frame["file_path"] + "_depth_0001.png")).astype(float)[:,:,0]
-            transformed = 8*(255-depth_im)/255
-             # np.save(os.path.join(path, frame["file_path"] + "_depth.npy"), transformed)
-            depth = transformed.flatten()
-            # print(f"Depth min: {np.min(depth)}, max: {np.max(depth)}")
-            bin_edges = np.linspace(3, 8, num=201)
-            hist, _ = np.histogram(depth, bins=bin_edges)
+            # depth_im = cv2.imread(os.path.join(path, frame["file_path"] + "_depth_0001.png")).astype(float)[:,:,0]
+            # transformed = 8*(255-depth_im)/255
+            #  # np.save(os.path.join(path, frame["file_path"] + "_depth.npy"), transformed)
+            # depth = transformed.flatten()
+            # # print(f"Depth min: {np.min(depth)}, max: {np.max(depth)}")
+            # bin_edges = np.linspace(3, 8, num=201)
+            # hist, _ = np.histogram(depth, bins=bin_edges)
            
-            depth = hist / np.max(hist)
-
+            #depth = hist / np.max(hist)
+            depth= [None,None]
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                             image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], depth=depth))
             
@@ -337,6 +567,68 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
                            test_cameras=test_cam_infos,
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path)
+    return scene_info
+
+def readUnderwaterInfo(path, white_background, eval, extension=".png"):
+    # print("Reading Training Transforms")
+    # train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
+    # print("Reading Test Transforms")
+    # test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
+    
+    # if not eval:
+    #     train_cam_infos.extend(test_cam_infos)
+    #     test_cam_infos = []
+    print("Reading Transforms")
+    cam_infos = readCamerasFromTransformsUnderwater(path, white_background, extension)
+    if eval:
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % 4 == 0]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % 2 != 0]
+    else:
+        train_cam_infos = cam_infos
+        test_cam_infos = []
+
+    # Extract all rotations and translations into a list of poses
+    poses = []
+    for cam in train_cam_infos:
+        R = cam.R
+        T = cam.T
+        pose = np.eye(4)
+        pose[:3, :3] = R
+        pose[:3, 3] = T
+        poses.append(pose)
+    
+    # # plot the camera poses 
+    # plot_camera_poses(poses)
+    # sys.exit()
+    nerf_normalization = getNerfppNorm(train_cam_infos)
+
+    ply_path = os.path.join(path, "points3d.ply")
+    if not os.path.exists(ply_path):
+        # Since this data set has no colmap data, we start with random points
+        num_pts = 100_000
+        print(f"Generating random point cloud ({num_pts})...")
+        
+        # We create random points inside the bounds of the synthetic Blender scenes
+        xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
+        shs = np.random.random((num_pts, 3)) / 255.0
+        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
+        
+        storePly(ply_path, xyz, SH2RGB(shs) * 255)
+    try:
+        pcd = fetchPly(ply_path)
+    except Exception as err:
+        print(err)
+        pcd = None
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path)
+    train_cam_infos = scene_info.train_cameras
+    # get first image 
+    first_image = train_cam_infos[0].image
+    #print(first_image.shape)
     return scene_info
 
 # BLOCK: Read ToRF Scene
@@ -451,7 +743,7 @@ def readToRFInfo(path, white_background, eval, extension=".npy", llffhold=8):
 
 
 # BLOCK: Read Mitsuba Scene
-def readMistubaCameras(path, h_res, w_res):
+def readMistubaCameras(path, white_background):
     cam_list = []
     # Color paths
     fovx_path = os.path.join(path, "camera/fov.npy")
@@ -486,18 +778,22 @@ def readMistubaCameras(path, h_res, w_res):
         T = W2C[:3, 3]
 
         # Read the depth (Statistically)
+        h_res_scale = 5
+        w_res_scale = 5
         depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
-        h_res_window = depth.shape[0] // h_res
-        w_res_window = depth.shape[1] // w_res
+
         bin_edges = np.linspace(0, 8, num=201)
-        hist_h = np.zeros((h_res, len(bin_edges)-1))
-        for i in range(h_res):
-            hist_h[i], _ = np.histogram(depth[i * h_res_window: (i + 1) * h_res_window], bins=bin_edges)
+
+        hist_h = np.zeros((depth.shape[0] // h_res_scale, len(bin_edges)-1))
+        
+        for i in range(depth.shape[0] // h_res_scale):
+            print(np.histogram(depth[i * h_res_scale: (i + 1) * h_res_scale], bins=bin_edges))
+            hist_h[i], _ = np.histogram(depth[i * h_res_scale: (i + 1) * h_res_scale], bins=bin_edges)
         hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
         hist_h = hist_h.T
-        hist_w = np.zeros((w_res, len(bin_edges)-1))
-        for i in range(w_res):
-            hist_w[i], _ = np.histogram(depth[:, i * w_res_window : (i + 1) * w_res_window], bins=bin_edges)
+        hist_w = np.zeros((depth.shape[1] // w_res_scale, len(bin_edges)-1))
+        for i in range(depth.shape[1] // w_res_scale):
+            hist_w[i], _ = np.histogram(depth[:, i * w_res_scale : (i + 1) * w_res_scale], bins=bin_edges)
         hist_w = hist_w / hist_w.max(axis=1, keepdims=True)
         hist_w = hist_w.T
 
@@ -516,8 +812,8 @@ def readMistubaCameras(path, h_res, w_res):
 
     return cam_list
 
-def readMitsubaSceneInfo(path, eval, h_res, w_res):
-    cam_infos = readMistubaCameras(path, h_res, w_res)
+def readMitsubaSceneInfo(path, white_background, eval, extension=".npy", llffhold=8):
+    cam_infos = readMistubaCameras(path, white_background)
     nerf_normalization = getNerfppNorm(cam_infos)
 
     if math.sqrt(len(cam_infos)) % 1 != 0:
@@ -572,6 +868,7 @@ def readMitsubaSceneInfo(path, eval, h_res, w_res):
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
     "Blender" : readNerfSyntheticInfo,
+    "Underwater": readUnderwaterInfo,
     "ToRF" : readToRFInfo,
     "Mitsuba" : readMitsubaSceneInfo,
 }
