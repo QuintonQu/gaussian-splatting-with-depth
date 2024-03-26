@@ -49,7 +49,8 @@ def loadCam(args, id, cam_info, resolution_scale):
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, depth=cam_info.depth)
+                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, depth=cam_info.depth,
+                  is_sonar=cam_info.is_sonar)
 
 def loadSon(args, id, cam_info):
     resized_image_rgb = cam_info.image
@@ -63,11 +64,8 @@ def loadSon(args, id, cam_info):
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []
     for id, c in enumerate(cam_infos):
-        if not c.is_sonar:  
-            camera_list.append(loadCam(args, id, c, resolution_scale))
-        else: 
-            # doing nothing for now
-            camera_list.append(loadSon(args, id , c))
+        camera_list.append(loadCam(args, id, c, resolution_scale))
+
     return camera_list
 
 def camera_to_JSON(id, camera : Camera):

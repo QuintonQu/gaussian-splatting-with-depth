@@ -61,10 +61,20 @@ class SceneInfo(NamedTuple):
 def plot_camera_poses(poses):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
+    colors = ['r', 'g', 'b']
 
-    for pose in poses:
-        ax.scatter(pose[0, 3], pose[1, 3], pose[2, 3], c='r', marker='o')
-
+    for i, pose_matrix in enumerate(poses):
+        position = pose_matrix[:3, 3]
+        orientation = pose_matrix[:3, :3]
+        # Plot coordinate axes
+        for i in range(3):
+            axis_vector = 0.5 * orientation[:, i]  # Scale the axis for visualization
+            ax.quiver(position[0], position[1], position[2],
+                    axis_vector[0], axis_vector[1], axis_vector[2],
+                    color=colors[i], label=f'Axis {i}')
+    ax.set_xlim([-3, 3])  # Adjust these limits based on your data
+    ax.set_ylim([-3, 3])
+    ax.set_zlim([-3, 3])
     ax.set_xlabel('X Label')
     ax.set_ylabel('Y Label')
     ax.set_zlabel('Z Label')
@@ -211,8 +221,16 @@ def fetchPly(path):
     plydata = PlyData.read(path)
     vertices = plydata['vertex']
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
-    colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
-    normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    num_points = len(vertices['x'])
+    try:
+        colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
+    except:
+        shs = np.random.random((num_points, 3)) / 255.0
+        colors = SH2RGB(shs)
+    try:
+        normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    except:
+        normals = np.zeros((num_points, 3))
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
 
@@ -334,31 +352,28 @@ def getPose(p, s):
                     [0, 0, 0, 1]])          
     return Pp@Ps
 
-def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"):
-    cam_infos = []
-    add_sonar = True
-    add_camera = False
-    data_dir = "./data/underwater"
-    # PROCESS THE SONAR IMAGES       
+def add_sonar(data_dir):
     basedir = os.path.join(data_dir, 'real_14deg.mat')
-    
+
     data = io.loadmat(basedir)
     images_raw = data["images"].squeeze()
     sensor_rels = data["sensor_rels"].squeeze()
     platform_poses = data["platform_poses"].squeeze()
-
-
+    cam_infos = []
+    
     bound_substract_bottom = 100
     bound_substract_top = 100
     skip_index = []
     max_row = 512
-    min_int = 0.2
+    min_int = 0.01
     images = []
     histograms = []
     hfov = data['hfov']
     vfov = data['vfov']
     for i, image_raw in enumerate(images_raw):
         if i in skip_index: continue
+        # if i !=10:
+        #     skip_index.append(i)
         im = image_raw
         im[0:bound_substract_top, :] = 0
         im[max_row-bound_substract_bottom:max_row, :] = 0
@@ -367,8 +382,24 @@ def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"
         if num_true < 20:
            skip_index.append(i)
            continue
-        # bin_edges = np.linspace(0.75, 3, num=513)
-        # #hist_h = np.zeros((depth.shape[0] , len(bin_edges)-1))
+        
+        # print the intensity values greater than 0
+        # depth = np.zeros((im.shape[0], im.shape[1]))
+        # for theta in range(im.shape[1]):
+        #     hist_h = np.zeros(im.shape[0])
+        #     n = 0
+        #     for r in range(im.shape[0]):
+        #         if im[r, theta] > 0:
+        #             hist_h[r] = 1
+        #             n+=1
+        #         else:
+        #             hist_h[r] = 0
+        #     if n > 0:
+        #         hist_h = hist_h / n
+        #     depth[:, theta] = hist_h
+    
+        #cv2.imwrite('./experiments/input/{}.png'.format(str(i)), depth*255)
+        # hist_h = np.zeros((depth.shape[0] , 513))
         # # create a histogram for each column 
         # hist_h_acc = []
         # for j in range(im.shape[1]):
@@ -384,18 +415,36 @@ def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"
         #print(hist_h_acc)
         # normalize columns of im 
         #images.append(im)
+        depth = np.zeros((im.shape[0], im.shape[1]))
         for j in range(im.shape[1]):
             if im[:,j].max() > 0:
+                # get index where intensity in column is greater than 0
+                # idx = np.where(im[:,j] > 0)
+                # N = len(idx)
+                # depth[idx,j] = 1
+                # depth[:,j] = depth[:,j] / N
+                # create a distrinution per column
+                #im[:,j] = im[:,j] / np.sum(im[:,j])
                 im[:,j] = im[:,j] / im[:,j].max()
-        
+
+                # assrt that at least one intensity value is greater than 0
+            assert np.count_nonzero(im[:,j]) > 0
+        cv2.imwrite('./experiments/input/{}.png'.format(str(i)), im*255)
         histograms.append([None, im])
-        
+
     sensor_poses = []
+    translation_offset = np.array([-0.5500,  1.5000,  1.7500])
     for i in range(len(sensor_rels)):
         if i in skip_index: continue
         P = getPose(platform_poses[i], sensor_rels[i])
+        # P is the camera-to-world transform. invert it to get the world-to-camera transform
+        P[:3, 3] = P[:3, 3] - translation_offset
+        R = P[:3,:3]
+        # rotate R by 90 degrees around y clockwise (sonar to camera coordinate system)
+        R = R @ np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]]) 
+        P[:3, :3] = R
         w2c = np.linalg.inv(P)
-        R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
+        R = w2c[:3,:3].T  # R is stored transposed due to 'glm' in CUDA code
         T = w2c[:3, 3]
         sensor_poses.append((R, T))
     
@@ -411,17 +460,17 @@ def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"
         #im_data = np.array(image.convert("RGBA"))
         depth = histograms[i]
         if add_sonar:
-            cam_infos.append(CameraInfo(uid=i, R=R, T=T, FovY=hfov, FovX=vfov, image=image,
+            cam_infos.append(CameraInfo(uid=i, R=R, T=T, FovY=vfov, FovX=hfov, image=image,
                             image_path=image_path, image_name=image_name, width=96, height=44, depth=depth,
                             is_sonar=True))
+    return cam_infos
 
-    if not add_camera:
-        return cam_infos
+def add_cam(path, white_background, extension, data_dir):
     # PROCESS THE CAMERA IMAGES
     FocalLength= [776.3492, 775.8459]
     FocalLengthm = [0.0107, 0.0107]
     ImageSize = [512, 612]
-    
+    cam_infos = []
     K= np.array([[776.3492, 0, 305.3432],
                 [0, 775.8459, 249.1058],
                 [0, 0, 1.0000]])
@@ -476,7 +525,31 @@ def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"
         cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                         image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], depth=depth,
                         is_sonar=False))
+    return cam_infos
 
+def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"):
+    
+    add_sonar_f = True
+    add_camera_f = False
+    data_dir = "./data/underwater"
+    # PROCESS THE SONAR IMAGES       
+    
+    if add_camera_f:
+        cam_infos_cam = add_cam(path, white_background, extension, data_dir)
+
+    if add_sonar_f:
+        cam_infos_son = add_sonar(data_dir)
+
+    # for i, son in enumerate(cam_infos_son):
+    #     # get ith camera pose
+    #     cam = cam_infos_cam[i]
+    #     # rotate cam.R by 90 clockwise around y
+    #     R_rot = np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]]) @ cam.R
+    #     cam_infos_son[i]._replace(R=R_rot, T=cam.T)
+
+    #cam_infos = cam_infos_cam + cam_infos_son
+    cam_infos = cam_infos_son
+    #cam_infos = cam_infos_cam
     return cam_infos
 
 def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png"):
@@ -558,7 +631,7 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
         print(f"Generating random point cloud ({num_pts})...")
         
         # We create random points inside the bounds of the synthetic Blender scenes
-        xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
+        xyz = np.random.random((num_pts, 3)) * 2.6 # - 1.3
         shs = np.random.random((num_pts, 3)) / 255.0
         pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
 
@@ -599,13 +672,17 @@ def readUnderwaterInfo(path, white_background, eval, extension=".png"):
         R = cam.R
         T = cam.T
         pose = np.eye(4)
-        pose[:3, :3] = R
+        pose[:3, :3] = R.T
         pose[:3, 3] = T
-        poses.append(pose)
-    
+        # pose is the world-to-camera transform
+        poses.append(np.linalg.inv(pose))
+        
+    # sys.exit()
+    # print(len(poses))
     # # plot the camera poses 
     # plot_camera_poses(poses)
     # sys.exit()
+
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
     ply_path = os.path.join(path, "points3d.ply")
@@ -623,9 +700,28 @@ def readUnderwaterInfo(path, white_background, eval, extension=".png"):
     try:
         pcd = fetchPly(ply_path)
     except Exception as err:
-        print(err)
+        raise err
         pcd = None
-
+    # for each sonar image, find the minimum and maximum distance between the sonar translation and each point in the pointcloud 
+    for cam in train_cam_infos:
+        # get the sonar image 
+        R = cam.R
+        T = cam.T
+        # get the camera pose in world coordinates 
+        pose = np.eye(4)
+        pose[:3, :3] = R.T
+        pose[:3, 3] = T
+        # get the camera-to-world transform
+        c2w = np.linalg.inv(pose)
+        # get the camera translation in world coordinates 
+        T = c2w[:3, 3]
+        # get the minimum and maximum distance between the sonar translation and each point in the pointcloud 
+        min_dist = np.min(np.linalg.norm(pcd.points - T, axis=1))
+        max_dist = np.max(np.linalg.norm(pcd.points - T, axis=1))
+        # print(f"Min dist: {min_dist}, Max dist: {max_dist}")
+    
+    # print(pcd.points)
+    # #sys.exit()
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
                            test_cameras=test_cam_infos,

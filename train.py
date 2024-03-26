@@ -15,6 +15,7 @@ from random import randint
 from utils.loss_utils import l1_loss, ssim, l2_loss
 from gaussian_renderer import render, network_gui
 import sys
+import cv2 
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
@@ -34,6 +35,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
+    Z_depths = []
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
@@ -51,21 +53,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter += 1
     Z_total = 0.0
     l1_loss_total = 0.0
-    for iteration in range(first_iter, opt.iterations + 1):        
-        # if network_gui.conn == None:
-        #     network_gui.try_connect()
-        # while network_gui.conn != None:
-        #     try:
-        #         net_image_bytes = None
-        #         custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
-        #         if custom_cam != None:
-        #             net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
-        #             net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
-        #         network_gui.send(net_image_bytes, dataset.source_path)
-        #         if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
-        #             break
-        #     except Exception as e:
-        #         network_gui.conn = None
+
+    extrapath = './experiments/'
+    if not os.path.exists(extrapath):
+        os.makedirs(extrapath)
+
+    extrapath = './experiments/gt'
+    if not os.path.exists(extrapath):
+        os.makedirs(extrapath)
+        
+    extrapath = './experiments/res'
+    if not os.path.exists(extrapath):
+        os.makedirs(extrapath)
+        
+    extrapath = './experiments/input'
+    if not os.path.exists(extrapath):
+        os.makedirs(extrapath)
+
+    for iteration in range(first_iter, opt.iterations + 1):
 
         iter_start.record()
 
@@ -117,9 +122,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             z_density_h = render_pkg["z_density_h"]
             z_density_w = render_pkg["z_density_w"]
 
+        # z_density_h = render_pkg["z_density_h"].unfold(1, h_res_window, h_res_window).sum(dim=2)
+        # z_density_w = render_pkg["z_density_w"].unfold(1, w_res_window, w_res_window).sum(dim=2)
+                
+        # print("z_density_h shape: ", z_density_h.shape)
+        # print("z_density_w shape: ", z_density_w.shape)
+
         # Min-max depth normalization
-        z_density_h = z_density_h / (z_density_h.max(dim=0, keepdim=True)[0] + 1e-10)
+            
+        #z_density_h = z_density_h / (z_density_h.max(dim=0, keepdim=True)[0] + 1e-10)
         z_density_w = z_density_w / (z_density_w.max(dim=0, keepdim=True)[0] + 1e-10)
+        
+        assert not torch.isnan(z_density_w).any(), "z_density_w is nan"
 
         if not is_sonar:
             # Q: is this necessary for sonar?
@@ -127,11 +141,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             assert z_density_w.shape[1] == dataset.w_res
 
         if is_sonar:
-            ZL = l1_loss(z_density_w, gt_density_w) 
+            ZL = l2_loss(z_density_w, gt_density_w)
+            # save the ground truth and rendered density as gray scale images
+            
+            #if torch.count_nonzero(z_density_w, dim=None) > 0:
+            cv2.imwrite('./experiments/gt/gt_density_w_' + str(iteration) + '.png', gt_density_w.detach().cpu().numpy()*255)
+            cv2.imwrite('./experiments/res/res_density_w_' + str(iteration) + '.png', z_density_w.detach().cpu().numpy()*255)
+
             # count the non-zero elements in the ground truth density
-            print("z_density_w ", torch.count_nonzero(z_density_w, dim=None))
-            print("g_denSity_w ", torch.count_nonzero(gt_density_w, dim=None)) 
-            loss = ZL / (1.5 ** (iteration // opt.opacity_reset_interval + 1))
+            #print("z_density_w ", torch.count_nonzero(z_density_w, dim=None))
+            #print("g_denSity_w ", torch.count_nonzero(gt_density_w, dim=None)) 
+            loss = ZL #/ (1.5 ** (iteration // opt.opacity_reset_interval + 1))
             Z_total += ZL.item()
         else:
             Ll1 = l1_loss(image, gt_image)
@@ -142,11 +162,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             #         loss += 0.1 * ZL / (1.5 ** (iteration // opt.opacity_reset_interval + 1))
             l1_loss_total += Ll1.item()
 
+        #print("WARNING: backward is not called")
         loss.backward()
         iter_end.record()
 
         if iteration % 1000 == 0:
             print("ZL: ", Z_total / 1000)
+            Z_depths.append((iteration, Z_total / 1000))
             Z_total = 0.0
             print("L1: ", l1_loss_total / 1000)
             l1_loss_total = 0.0
@@ -176,18 +198,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
-            # Densification
-            if iteration < opt.densify_until_iter:
-                # Keep track of max radii in image-space for pruning
-                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+            # # Densification
+            # if iteration < opt.densify_until_iter:
+            #     # Keep track of max radii in image-space for pruning
+            #     gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+            #     gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-                if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
-                    size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+            #     if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+            #         size_threshold = 20 if iteration > opt.opacity_reset_interval else None
+            #         gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                 
-                if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
-                    gaussians.reset_opacity()
+            #     if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+            #         gaussians.reset_opacity()
 
             # Optimizer step
             if iteration < opt.iterations:
@@ -197,6 +219,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+        
+        # plot Z_depths 
+    iterations = [x[0] for x in Z_depths]
+    Z_depth = [x[1] for x in Z_depths]
+    import matplotlib.pyplot as plt
+    plt.clf()
+    plt.plot(iterations, Z_depth)
+    plt.xlabel('Iterations')
+    plt.ylabel('Z_depth')
+    plt.title('Z_depth vs Iterations')
+    plt.savefig('./experiments/Z_depth.png')
+
+
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
