@@ -9,15 +9,15 @@ parser.add_argument('-gt', type=str, help='Path to the folder containing the gro
 parser.add_argument('-s', type=int, help='Start index of the file list (for tests)', default=0)
 args = parser.parse_args()
 
-folder_path_gt = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.gt + '/depth'
-folder_path_gt = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.gt + '/Sonar_raw'
+folder_path_gt = './' + args.gt + '/depth'
+# folder_path_gt = './' + args.gt + '/Sonar_raw'
 if args.fp is None:
     folder_path = None
     print("No prediction folder path is given")
-    save_folder_path = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.gt + '/z_compare'
+    save_folder_path = './' + args.gt + '/z_compare'
 else:
-    folder_path = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.fp + '/train/ours_30000/z_density'
-    save_folder_path = '/dartfs-hpc/rc/home/r/f006gmr/gaussian-splatting/' + args.fp + '/train/ours_30000/z_compare'
+    folder_path = './' + args.fp + '/train/ours_30000/z_density'
+    save_folder_path = './' + args.fp + '/train/ours_30000/z_compare'
 
 # Create the save folder if it doesn't exist
 if not os.path.exists(save_folder_path):
@@ -44,15 +44,15 @@ for file in file_list:
     # data = data / np.max(data)
 
     # Calculate the histogram
-    # bin_edges = np.linspace(13, 15.5, 51)
-    # hist, bin_edges = np.histogram(flattened_data, bins=bin_edges)
+    bin_edges = np.linspace(3, 8, 201)
+    hist, bin_edges = np.histogram(flattened_data, bins=bin_edges)
 
     # Normalize the histogram to [0, 1] minmax
-    # hist = hist / np.max(hist)
-    bin_edges = np.linspace(0, 8, 201)
+    hist = hist / np.max(hist)
+    # bin_edges = np.linspace(0, 8, 201)
 
     # Plot the histogram as a line graph
-    plt.plot(bin_edges[:-1], flattened_data, label="gt_depth")
+    plt.plot(bin_edges[:-1], hist, label="gt_depth")
     
     # BLOCK: predicted by GS
     if folder_path is not None:
@@ -61,6 +61,7 @@ for file in file_list:
 
         # Normalize the data to [0, 1] minmax
         # data = (data - np.min(data)) / (np.max(data) - np.min(data))
+        data = np.sum(data, axis=1)
         data = data / np.max(data)
 
         plt.plot(bin_edges[:-1], data, label="predicted_by_gs")

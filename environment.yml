@@ -14,4 +14,4 @@ dependencies:
   - tqdm
   - pip:
     - submodules/diff-gaussian-rasterization
-    - submodules/simple-knn
+    - submodules/simple-knn`

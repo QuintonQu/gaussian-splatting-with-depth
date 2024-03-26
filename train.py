@@ -22,6 +22,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from PIL import Image
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -99,20 +100,43 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         z_density_h = render_pkg["z_density_h"].unfold(1, h_res_window, h_res_window).sum(dim=2)
         z_density_w = render_pkg["z_density_w"].unfold(1, w_res_window, w_res_window).sum(dim=2)
-        # Min-max depth normalization
         z_density_h = z_density_h / (z_density_h.max(dim=0, keepdim=True)[0] + 1e-10)
         z_density_w = z_density_w / (z_density_w.max(dim=0, keepdim=True)[0] + 1e-10)
         assert z_density_h.shape[1] == dataset.h_res
         assert z_density_w.shape[1] == dataset.w_res
+        assert not torch.isnan(z_density_h).any(), "z_density_h has nan"
+
 
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) 
+        # Ll1 = torch.zeros(1, dtype=torch.float32, device="cuda")
+        # loss = torch.zeros(1, dtype=torch.float32, device="cuda")
         ZL = torch.zeros(1, dtype=torch.float32, device="cuda")
         if gt_density_h is not None and gt_density_w is not None:
-            ZL = (l1_loss(z_density_h, gt_density_h) * dataset.w_res + l1_loss(z_density_w, gt_density_w) * dataset.h_res) / (dataset.h_res + dataset.w_res)
+            # ZL = (l1_loss(z_density_h, gt_density_h) * dataset.h_res + l1_loss(z_density_w, gt_density_w) * dataset.w_res) / (dataset.h_res + dataset.w_res)
+            ZL = l2_loss(z_density_h, gt_density_h)
             if opt.depth_loss:
-                loss += 0.1 * ZL / (1.5 ** (iteration // opt.opacity_reset_interval + 1))
+                # loss += 0.8 * ZL / (1.2 ** (iteration // opt.opacity_reset_interval)) 
+                loss += ZL * 3.0
         loss.backward()
+
+        # if iteration % 200 == 0:
+            # # Create masks where values are 1
+            # z_density_h_mask = abs(z_density_h - 1) < 1e-10
+            # gt_density_h_mask = abs(gt_density_h - 1) < 1e-10
+
+            # # Apply masks to keep only the values that are 1
+            # z_density_h_one = z_density_h_mask
+            # gt_density_h_one = gt_density_h_mask
+
+            # # Display the image
+            # # Convert to grayscale image data
+            # image_data = torch.cat((z_density_h, gt_density_h), dim=0).cpu().detach().numpy() * 255
+            # image_data = image_data.astype('uint8')
+
+            # # Create a PIL image and save it
+            # image = Image.fromarray(image_data, 'L')
+            # image.save(os.path.join(dataset.model_path, "z_density_h_{}.png".format(iteration)))
 
         iter_end.record()
 

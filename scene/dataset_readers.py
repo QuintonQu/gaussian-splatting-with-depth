@@ -29,6 +29,8 @@ import re
 import cv2
 import json
 from tqdm import tqdm
+import warnings
+import matplotlib.pyplot as plt
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -142,7 +144,8 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_
             depth = np.load(os.path.join(depth_folder, image_name + ".npy"))
             h_res_window = depth.shape[0] // h_res
             w_res_window = depth.shape[1] // w_res
-            bin_edges = np.linspace(0, 8, num=201)
+            #  WARNING: Check here for every dataset
+            bin_edges = np.linspace(0, 40, num=201)
             hist_h = np.zeros((h_res, len(bin_edges)-1))
             for i in range(h_res):
                 hist_h[i], _ = np.histogram(depth[i * h_res_window: (i + 1) * h_res_window], bins=bin_edges)
@@ -161,7 +164,6 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_
                               image_path=image_path, image_name=image_name, width=width, height=height,
                                 depth=[hist_h, hist_w] if depth_folder is not None else None)
         cam_infos.append(cam_info)
-    sys.stdout.write('\n')
     return cam_infos
 
 def fetchPly(path):
@@ -211,9 +213,17 @@ def readColmapSceneInfo(path, images, eval, llffhold=4, h_res=1, w_res=1):
                                             images_folder=os.path.join(path, reading_dir))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
+    #  WARNING: Check here for every dataset
+    # if eval:
+    #     train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx < 3*13]
+    #     test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx >= 3*13]
+    # else:
+    #     train_cam_infos = cam_infos
+    #     test_cam_infos = []
+
     if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx < 3*13]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx >= 3*13]
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if (idx % 2 == 0 or idx==len(cam_infos)-1)]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % 2 != 0]
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
@@ -484,22 +494,37 @@ def readMistubaCameras(path, h_res, w_res):
         W2C = np.linalg.inv(C2W)
         R = np.transpose(W2C[:3, :3])
         T = W2C[:3, 3]
+        # print(f"Camera {idx} with R: {R}, T: {T}")
 
         # Read the depth (Statistically)
         depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
         h_res_window = depth.shape[0] // h_res
         w_res_window = depth.shape[1] // w_res
-        bin_edges = np.linspace(0, 8, num=201)
+        # WARNING: Check here for every dataset
+        # print(f"Depth min: {np.min(depth[depth > 0])}, max: {np.max(depth)}")
+        # exit(0)
+        bin_edges = np.linspace(3.0, 8.0, num=201)
         hist_h = np.zeros((h_res, len(bin_edges)-1))
         for i in range(h_res):
             hist_h[i], _ = np.histogram(depth[i * h_res_window: (i + 1) * h_res_window], bins=bin_edges)
-        hist_h = hist_h / hist_h.max(axis=1, keepdims=True)
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('error')
+                hist_h = hist_h / (hist_h.max(axis=1, keepdims=True) + 1e-10)
+        except Warning:
+            print("Warning caught during division")
+            print(f"Depth min: {np.min(depth)}, max: {np.max(depth)}")
+            exit(1)
         hist_h = hist_h.T
         hist_w = np.zeros((w_res, len(bin_edges)-1))
         for i in range(w_res):
             hist_w[i], _ = np.histogram(depth[:, i * w_res_window : (i + 1) * w_res_window], bins=bin_edges)
-        hist_w = hist_w / hist_w.max(axis=1, keepdims=True)
+        hist_w = hist_w / (hist_w.max(axis=1, keepdims=True) + 1e-10)
         hist_w = hist_w.T
+        
+        # WARNING Only for test (plot hist_h)
+        # os.makedirs("./output/test", exist_ok=True)
+        # plt.imsave(f"./output/test/hist_h_{idx}.png", hist_h)
 
         # WARNING Only for test
         # depth = np.load(os.path.join(depth_folder_path, color_file_paths[idx]))
@@ -508,6 +533,9 @@ def readMistubaCameras(path, h_res, w_res):
         fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
         FovY = fovy 
         FovX = fovx
+
+        # print("Focal length: ", fov2focal(fovx, image.size[0]))
+        # print("FoV: ", FovY, FovX)
 
         # Create the camera
         cam_info = CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
@@ -520,25 +548,33 @@ def readMitsubaSceneInfo(path, eval, h_res, w_res):
     cam_infos = readMistubaCameras(path, h_res, w_res)
     nerf_normalization = getNerfppNorm(cam_infos)
 
+    #  WARNING: Check here for every dataset
     if math.sqrt(len(cam_infos)) % 1 != 0:
         raise ValueError("The length of cam_infos must be a perfect square.")
     size = int(math.sqrt(len(cam_infos)))
     cam_infos_2d = [cam_infos[i*size : (i+1)*size] for i in range(size)]
-
     if eval:
         train_cam_infos = []
         test_cam_infos = []
         for i in range(size):
             for j in range(size):
-                if ((i) % 4 == 0) and ((j) % 4 == 0):
+                if ((i) % 2 == 0) and ((j) % 2 == 0):
                     train_cam_infos.append(cam_infos_2d[i][j])
                 else:
                     test_cam_infos.append(cam_infos_2d[i][j])
-        # test_cam_infos = []
-        # train_cam_infos = [train_cam_infos[10]]
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
+
+    # if eval:
+    #     train_cam_infos = [c for idx, c in enumerate(cam_infos) if (idx % 4 == 0 or idx==len(cam_infos)-1)]
+    #     test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % 4 != 0]
+    #     test_cam_infos = []
+    # else:
+    #     train_cam_infos = cam_infos
+    #     test_cam_infos = []
+    train_cam_infos = [train_cam_infos[100]]
+    test_cam_infos = []
     
     print("Train set size: ", len(train_cam_infos))
     print("Test set size: ", len(test_cam_infos))
@@ -547,11 +583,11 @@ def readMitsubaSceneInfo(path, eval, h_res, w_res):
     ply_path = os.path.join(path, "points3d.ply")
     if not os.path.exists(ply_path):
         # Since this data set has no colmap data, we start with random points
-        num_pts = 100_000
+        num_pts = 200_000
         print(f"Generating random point cloud ({num_pts})...")
         
         # We create random points inside the bounds of the scenes
-        xyz = np.random.random((num_pts, 3)) * 8 - 4
+        xyz = np.random.random((num_pts, 3)) * 10 - 5
         shs = np.random.random((num_pts, 3)) / 255.0
         pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
 
