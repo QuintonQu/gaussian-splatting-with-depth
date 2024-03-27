@@ -428,7 +428,7 @@ def add_sonar(data_dir):
                 im[:,j] = im[:,j] / im[:,j].max()
 
                 # assrt that at least one intensity value is greater than 0
-            assert np.count_nonzero(im[:,j]) > 0
+            #assert np.count_nonzero(im[:,j]) > 0
         cv2.imwrite('./experiments/input/{}.png'.format(str(i)), im*255)
         histograms.append([None, im])
 
@@ -529,8 +529,8 @@ def add_cam(path, white_background, extension, data_dir):
 
 def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"):
     
-    add_sonar_f = True
-    add_camera_f = False
+    add_sonar_f = False 
+    add_camera_f = True
     data_dir = "./data/underwater"
     # PROCESS THE SONAR IMAGES       
     
@@ -540,15 +540,16 @@ def readCamerasFromTransformsUnderwater(path, white_background, extension=".png"
     if add_sonar_f:
         cam_infos_son = add_sonar(data_dir)
 
-    # for i, son in enumerate(cam_infos_son):
-    #     # get ith camera pose
-    #     cam = cam_infos_cam[i]
-    #     # rotate cam.R by 90 clockwise around y
-    #     R_rot = np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]]) @ cam.R
-    #     cam_infos_son[i]._replace(R=R_rot, T=cam.T)
-
-    #cam_infos = cam_infos_cam + cam_infos_son
-    cam_infos = cam_infos_son
+    if add_sonar_f and add_camera_f:
+        print("SONAR+CAMERA")
+        cam_infos = cam_infos_cam + cam_infos_son
+    elif add_sonar_f:
+        print("SONAR")
+        cam_infos = cam_infos_son
+    else:
+        print("CAMERA")
+        cam_infos = cam_infos_cam
+    #cam_infos = cam_infos_son
     #cam_infos = cam_infos_cam
     return cam_infos
 

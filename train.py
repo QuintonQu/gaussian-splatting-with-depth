@@ -141,18 +141,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             assert z_density_w.shape[1] == dataset.w_res
 
         if is_sonar:
-            ZL = l2_loss(z_density_w, gt_density_w)
+            ZL = l1_loss(z_density_w, gt_density_w)
             # save the ground truth and rendered density as gray scale images
             
-            #if torch.count_nonzero(z_density_w, dim=None) > 0:
-            cv2.imwrite('./experiments/gt/gt_density_w_' + str(iteration) + '.png', gt_density_w.detach().cpu().numpy()*255)
-            cv2.imwrite('./experiments/res/res_density_w_' + str(iteration) + '.png', z_density_w.detach().cpu().numpy()*255)
+            if iteration % 100 == 0:
+                #if torch.count_nonzero(z_density_w, dim=None) > 0:
+                cv2.imwrite('./experiments/gt/gt_density_w_' + str(iteration) + '.png', gt_density_w.detach().cpu().numpy()*255)
+                cv2.imwrite('./experiments/res/res_density_w_' + str(iteration) + '.png', z_density_w.detach().cpu().numpy()*255)
 
             # count the non-zero elements in the ground truth density
             #print("z_density_w ", torch.count_nonzero(z_density_w, dim=None))
             #print("g_denSity_w ", torch.count_nonzero(gt_density_w, dim=None)) 
-            loss = ZL #/ (1.5 ** (iteration // opt.opacity_reset_interval + 1))
-            Z_total += ZL.item()
+            loss = 1*ZL #/ (1.5 ** (iteration // opt.opacity_reset_interval + 1))
+            Z_total += loss.item()
         else:
             Ll1 = l1_loss(image, gt_image)
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)) 
@@ -199,17 +200,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 scene.save(iteration)
 
             # # Densification
-            # if iteration < opt.densify_until_iter:
-            #     # Keep track of max radii in image-space for pruning
-            #     gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-            #     gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+            if iteration < opt.densify_until_iter:
+                # Keep track of max radii in image-space for pruning
+                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-            #     if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
-            #         size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-            #         gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                    size_threshold = 20 if iteration > opt.opacity_reset_interval else None
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                 
-            #     if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
-            #         gaussians.reset_opacity()
+                if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                    gaussians.reset_opacity()
 
             # Optimizer step
             if iteration < opt.iterations:
