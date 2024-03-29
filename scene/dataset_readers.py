@@ -106,8 +106,6 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_
         R = np.transpose(qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
 
-        # intr.model = "PINHOLE" ### check what happens exactly
-
         if intr.model=="SIMPLE_PINHOLE":
             focal_length_x = intr.params[0]
             FovY = focal2fov(focal_length_x, height)
@@ -123,21 +121,6 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
 
-        # #TODO: change this for the next time
-        # if int(image_name) in list_to_pop:
-        #     continue
-
-        # if sonar_wave_folder is not None:
-        #     # handle the 0 degree case
-        #     angle = image_name
-        #     if angle == '0':
-        #         angle = '360'
-
-        #     sonar_file = f'Flight-{angle.zfill(6)}.npy'
-        #     sonar_wf_file = os.path.join(sonar_wave_folder, sonar_file)
-
-        #     depth = np.load(sonar_wf_file)
-
         image = Image.open(image_path)
 
         if depth_folder is not None:
@@ -145,7 +128,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_
             h_res_window = depth.shape[0] // h_res
             w_res_window = depth.shape[1] // w_res
             #  WARNING: Check here for every dataset
-            bin_edges = np.linspace(0, 40, num=201)
+            bin_edges = np.linspace(0, 8, num=201)
             hist_h = np.zeros((h_res, len(bin_edges)-1))
             for i in range(h_res):
                 hist_h[i], _ = np.histogram(depth[i * h_res_window: (i + 1) * h_res_window], bins=bin_edges)
@@ -157,9 +140,6 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sonar_wave_
             hist_w = hist_w / hist_w.max(axis=1, keepdims=True)
             hist_w = hist_w.T
 
-        # cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-        #                       image_path=image_path, image_name=image_name, width=width, height=height,
-        #                       wf=wf if sonar_wave_folder is not None else None)
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height,
                                 depth=[hist_h, hist_w] if depth_folder is not None else None)
@@ -214,19 +194,19 @@ def readColmapSceneInfo(path, images, eval, llffhold=4, h_res=1, w_res=1):
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     #  WARNING: Check here for every dataset
-    # if eval:
-    #     train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx < 3*13]
-    #     test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx >= 3*13]
-    # else:
-    #     train_cam_infos = cam_infos
-    #     test_cam_infos = []
-
     if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if (idx % 2 == 0 or idx==len(cam_infos)-1)]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % 2 != 0]
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx < 3*13]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx >= 3*13]
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
+
+    # if eval:
+    #     train_cam_infos = [c for idx, c in enumerate(cam_infos) if (idx % 2 == 0 or idx==len(cam_infos)-1)]
+    #     test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % 2 != 0]
+    # else:
+    #     train_cam_infos = cam_infos
+    #     test_cam_infos = []
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
